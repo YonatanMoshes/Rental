@@ -38,17 +38,30 @@ export function RentalForm({
 }: RentalFormProps) {
   const [customerName, setCustomerName] = useState("");
   const [startDate, setStartDate] = useState(todayIsoDate());
+  const selectedCarIsAvailable = availableCars.some((car) => car.id === selectedCarId);
+  const effectiveSelectedCarId = selectedCarIsAvailable ? selectedCarId : availableCars[0]?.id ?? "";
 
   useEffect(() => {
-    if (!selectedCarId && availableCars[0]) {
+    if (availableCars.length === 0) {
+      if (selectedCarId) {
+        onSelectedCarChange("");
+      }
+      return;
+    }
+
+    if (!availableCars.some((car) => car.id === selectedCarId)) {
       onSelectedCarChange(availableCars[0].id);
     }
   }, [availableCars, onSelectedCarChange, selectedCarId]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!effectiveSelectedCarId) {
+      return;
+    }
+
     await onSubmit({
-      car_id: selectedCarId,
+      car_id: effectiveSelectedCarId,
       customer_name: customerName.trim(),
       start_date: startDate
     });
@@ -65,7 +78,7 @@ export function RentalForm({
       <label>
         Available car
         <select
-          value={selectedCarId}
+          value={effectiveSelectedCarId}
           onChange={(event) => onSelectedCarChange(event.target.value)}
           disabled={availableCars.length === 0}
           required
@@ -102,7 +115,7 @@ export function RentalForm({
         />
       </label>
 
-      <button className="primary-button" type="submit" disabled={isSaving || availableCars.length === 0}>
+      <button className="primary-button" type="submit" disabled={isSaving || !effectiveSelectedCarId}>
         <ClipboardPlus size={18} aria-hidden="true" />
         Start rental
       </button>

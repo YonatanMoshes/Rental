@@ -1,0 +1,29 @@
+﻿services:
+  api:
+    build: .
+    container_name: rental-fleet-api
+    ports:
+      - "8000:8000"
+    environment:
+      APP_NAME: Rental Fleet Manager API
+      ENVIRONMENT: docker
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DATABASE: rental_fleet
+      LOG_LEVEL: INFO
+      LOG_FILE: /app/logs/rental_fleet.log
+    volumes:
+      - rental-fleet-logs:/app/logs
+    depends_on:
+      - mongo
+
+  mongo:
+    image: mongo:7
+    container_name: rental-fleet-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - rental-fleet-data:/data/db
+
+volumes:
+  rental-fleet-data:
+  rental-fleet-logs:

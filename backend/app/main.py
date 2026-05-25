@@ -12,12 +12,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
-from backend.app.api.routes import cars, rentals, system
+from backend.app.api.routes import cars, events, rentals, system
 from backend.app.core.config import get_settings
 from backend.app.core.errors import BusinessRuleError, NotFoundError
 from backend.app.core.logging import configure_logging
 from backend.app.db.indexes import ensure_database_indexes
 from backend.app.db.mongodb import close_mongodb_connection, connect_to_mongodb, get_database
+from backend.app.messaging.publisher import RabbitMQEventPublisher
 
 settings = get_settings()
 configure_logging(settings.log_level, settings.log_file)
@@ -37,18 +38,27 @@ def create_app(connect_database: bool = True) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         """Manage app startup and shutdown events."""
+        publisher: RabbitMQEventPublisher | None = None
         if connect_database:
             await connect_to_mongodb(settings)
             await ensure_database_indexes(get_database())
+            publisher = RabbitMQEventPublisher(settings)
+            await publisher.connect()
+            app.state.event_publisher = publisher
             logger.info("Connected to MongoDB database=%s", settings.mongodb_database)
-        yield
-        if connect_database:
-            await close_mongodb_connection()
+        try:
+            yield
+        finally:
+            if publisher is not None:
+                await publisher.close()
+            if connect_database:
+                await close_mongodb_connection()
 
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
     app.include_router(system.router)
     app.include_router(cars.router)
     app.include_router(rentals.router)
+    app.include_router(events.router)
 
     @app.exception_handler(NotFoundError)
     async def not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:

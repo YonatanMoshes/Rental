@@ -3,7 +3,9 @@
 # Services:
 #   - frontend: React app (port 5173)
 #   - api: FastAPI backend (port 8000)
+#   - worker: RabbitMQ consumer for fleet events
 #   - mongo: MongoDB database (port 27017)
+#   - rabbitmq: Message queue (ports 5672 and 15672)
 # 
 # Usage:
 #   docker-compose up        # Start all services
@@ -17,6 +19,7 @@ services:
     build:
       context: ./frontend
     container_name: rental-fleet-frontend
+    restart: unless-stopped
     ports:
       - "5173:80"
     depends_on:
@@ -27,6 +30,7 @@ services:
     # Serves REST API endpoints and Prometheus metrics
     build: .
     container_name: rental-fleet-api
+    restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
@@ -34,23 +38,66 @@ services:
       ENVIRONMENT: docker
       MONGODB_URI: mongodb://mongo:27017
       MONGODB_DATABASE: rental_fleet
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      EVENT_EXCHANGE_NAME: rental.fleet.events
+      EVENT_QUEUE_NAME: rental.fleet.events.audit
+      EVENT_ROUTING_KEY: fleet.event
       LOG_LEVEL: INFO
       LOG_FILE: /app/logs/rental_fleet.log
     volumes:
       - rental-fleet-logs:/app/logs
     depends_on:
       - mongo
+      - rabbitmq
+
+  worker:
+    # Background worker
+    # Consumes RabbitMQ events and stores them in MongoDB for auditing
+    build: .
+    container_name: rental-fleet-worker
+    restart: unless-stopped
+    command: ["python", "-m", "backend.app.workers.event_worker"]
+    environment:
+      APP_NAME: Rental Fleet Manager Worker
+      ENVIRONMENT: docker
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DATABASE: rental_fleet
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      EVENT_EXCHANGE_NAME: rental.fleet.events
+      EVENT_QUEUE_NAME: rental.fleet.events.audit
+      EVENT_ROUTING_KEY: fleet.event
+      LOG_LEVEL: INFO
+      LOG_FILE: /app/logs/rental_fleet.log
+    volumes:
+      - rental-fleet-logs:/app/logs
+    depends_on:
+      - mongo
+      - rabbitmq
 
   mongo:
     # MongoDB NoSQL database
     # Stores cars and rentals collections
     image: mongo:7
     container_name: rental-fleet-mongo
+    restart: unless-stopped
     ports:
       - "27017:27017"
     volumes:
       - rental-fleet-data:/data/db
 
+  rabbitmq:
+    # RabbitMQ message queue
+    # API publishes fleet events; worker consumes them asynchronously
+    image: rabbitmq:3-management
+    container_name: rental-fleet-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rental-fleet-rabbitmq:/var/lib/rabbitmq
+
 volumes:
   rental-fleet-data:
   rental-fleet-logs:
+  rental-fleet-rabbitmq:

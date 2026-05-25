@@ -7,6 +7,15 @@ from backend.app.core.errors import BusinessRuleError, NotFoundError
 from backend.app.models.enums import VehicleStatus
 from backend.app.schemas.cars import CarCreate, CarUpdate
 from backend.app.schemas.rentals import RentalCreate
+from backend.app.services.fleet_service import FleetService
+
+
+class CapturingEventPublisher:
+    def __init__(self):
+        self.events = []
+
+    async def publish(self, event):
+        self.events.append(event)
 
 
 def test_add_and_list_cars(fleet_service):
@@ -16,6 +25,20 @@ def test_add_and_list_cars(fleet_service):
 
         assert car.id == "1"
         assert cars == [car]
+
+    asyncio.run(scenario())
+
+
+def test_add_car_publishes_queue_event(fleet_service):
+    async def scenario():
+        publisher = CapturingEventPublisher()
+        service = FleetService(fleet_service.cars, fleet_service.rentals, publisher)
+
+        car = await service.add_car(CarCreate(model="Hyundai i20", year=2022))
+
+        assert publisher.events[0].event_type == "car.created"
+        assert publisher.events[0].aggregate_type == "car"
+        assert publisher.events[0].aggregate_id == car.id
 
     asyncio.run(scenario())
 

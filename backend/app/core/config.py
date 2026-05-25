@@ -15,6 +15,10 @@ class AppSettings(BaseSettings):
     environment: str = "local"
     mongodb_uri: str = "mongodb://localhost:27017"
     mongodb_database: str = "rental_fleet"
+    rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
+    event_exchange_name: str = "rental.fleet.events"
+    event_queue_name: str = "rental.fleet.events.audit"
+    event_routing_key: str = "fleet.event"
     log_level: str = "INFO"
     log_file: str = "logs/rental_fleet.log"
 

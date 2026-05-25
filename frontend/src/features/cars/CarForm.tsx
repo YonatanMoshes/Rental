@@ -1,10 +1,21 @@
+/**
+ * Car creation form component.
+ * 
+ * Allows users to add a new vehicle to the fleet by entering:
+ * - Model name
+ * - Year of manufacture
+ * - Initial status (available or maintenance)
+ */
+
 import { Plus } from "lucide-react";
 import { useState } from "react";
 
 import type { CarCreatePayload, VehicleStatus } from "../../types/fleet";
 
 type CarFormProps = {
+  /** Callback when form is submitted with car data. */
   onSubmit: (payload: CarCreatePayload) => Promise<void>;
+  /** If true, disables the submit button and shows saving state. */
   isSaving: boolean;
 };
 

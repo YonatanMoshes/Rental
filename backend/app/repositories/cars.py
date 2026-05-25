@@ -1,3 +1,9 @@
+"""MongoDB-backed repository for car persistence.
+
+Handles all database operations for cars including CRUD operations,
+filtering by status, and aggregation for metrics.
+"""
+
 from typing import Any
 
 from backend.app.db.object_ids import parse_object_id
@@ -7,16 +13,20 @@ from backend.app.schemas.cars import CarCreate, CarUpdate
 
 
 class MongoCarRepository:
+    """MongoDB repository for car documents."""
     def __init__(self, database: Any):
+        """Initialize with MongoDB database instance."""
         self.collection = database.cars
 
     async def create(self, data: CarCreate) -> CarDocument:
+        """Create and store a new car document."""
         document = data.model_dump(mode="json")
         result = await self.collection.insert_one(document)
         created = await self.collection.find_one({"_id": result.inserted_id})
         return self._to_document(created)
 
     async def get(self, car_id: str) -> CarDocument | None:
+        """Retrieve a single car by ID."""
         object_id = parse_object_id(car_id)
         if object_id is None:
             return None
@@ -24,6 +34,7 @@ class MongoCarRepository:
         return self._to_document(document) if document else None
 
     async def list(self, status: VehicleStatus | None = None) -> list[CarDocument]:
+        """List all cars, optionally filtered by status, sorted by model name."""
         query: dict[str, Any] = {}
         if status is not None:
             query["status"] = status.value
@@ -35,6 +46,7 @@ class MongoCarRepository:
         return cars
 
     async def update(self, car_id: str, data: CarUpdate) -> CarDocument | None:
+        """Update car fields (only non-None fields are updated)."""
         object_id = parse_object_id(car_id)
         if object_id is None:
             return None
@@ -47,6 +59,7 @@ class MongoCarRepository:
         return self._to_document(document) if document else None
 
     async def delete(self, car_id: str) -> bool:
+        """Delete a car document. Returns True if a document was deleted."""
         object_id = parse_object_id(car_id)
         if object_id is None:
             return False
@@ -54,6 +67,7 @@ class MongoCarRepository:
         return result.deleted_count == 1
 
     async def count_by_status(self) -> dict[str, int]:
+        """Get count of cars in each status (used for dashboard metrics)."""
         counts = {status.value: 0 for status in VehicleStatus}
         pipeline = [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]
         cursor = await self.collection.aggregate(pipeline)

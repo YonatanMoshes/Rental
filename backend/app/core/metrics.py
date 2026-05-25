@@ -1,3 +1,9 @@
+"""Prometheus metrics collection and observability.
+
+Tracks operation counts, durations, and fleet statistics.
+Metrics are exposed at /metrics endpoint in Prometheus format.
+"""
+
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from time import perf_counter
@@ -26,6 +32,7 @@ OPEN_RENTALS = Gauge("rental_fleet_open_rentals", "Rentals without an end date."
 
 
 def track_operation(operation: str) -> Callable[[F], F]:
+    """Decorator to track operation count and duration metrics."""
     def decorator(function: F) -> F:
         @wraps(function)
         async def wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -44,6 +51,7 @@ def track_operation(operation: str) -> Callable[[F], F]:
 
 
 async def refresh_metrics(car_repository: Any, rental_repository: Any) -> None:
+    """Update gauge metrics based on current database state."""
     counts = await car_repository.count_by_status()
     AVAILABLE_CARS.set(counts.get("available", 0))
     RENTED_CARS.set(counts.get("rented", 0))
@@ -51,4 +59,5 @@ async def refresh_metrics(car_repository: Any, rental_repository: Any) -> None:
 
 
 def metrics_response() -> Response:
+    """Generate Prometheus-format metrics response."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

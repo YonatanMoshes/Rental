@@ -1,3 +1,14 @@
+/**
+ * Cars table component.
+ * 
+ * Displays all fleet vehicles in a table with:
+ * - Car details (model, year)
+ * - Current status badge
+ * - Active rental information
+ * - Action buttons (rent, maintenance, delete)
+ * - Status filter for quick viewing
+ */
+
 import { CheckCircle2, Trash2, Wrench } from "lucide-react";
 
 import { StatusBadge } from "../../components/StatusBadge";
@@ -5,12 +16,19 @@ import type { Car, Rental, VehicleStatus } from "../../types/fleet";
 import { carDisplayName } from "../../utils/labels";
 
 type CarsTableProps = {
+  /** Array of cars to display. */
   cars: Car[];
+  /** All rentals (used to show active rental info). */
   rentals: Rental[];
+  /** Current status filter (empty string means no filter). */
   statusFilter: VehicleStatus | "";
+  /** Callback when status filter changes. */
   onStatusFilterChange: (status: VehicleStatus | "") => void;
+  /** Callback to update a car's status. */
   onUpdateStatus: (carId: string, status: VehicleStatus) => Promise<void>;
+  /** Callback to delete a car. */
   onDeleteCar: (carId: string) => Promise<void>;
+  /** Callback when user clicks rent button for a car. */
   onSelectForRental: (carId: string) => void;
 };
 

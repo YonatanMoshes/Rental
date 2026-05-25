@@ -1,3 +1,17 @@
+/**
+ * Main dashboard page component.
+ * 
+ * Orchestrates the entire rental fleet management UI including:
+ * - Summary metrics (total cars, available, in maintenance, open rentals)
+ * - Car management form and table
+ * - Rental management form and table
+ * - State management and API communication
+ * - Error and success message handling
+ * - Data refresh and loading states
+ * 
+ * The dashboard fetches all data on mount and after each action.
+ */
+
 import { CarFront, ClipboardList, Gauge, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 

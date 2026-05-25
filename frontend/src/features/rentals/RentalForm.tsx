@@ -1,3 +1,14 @@
+/**
+ * Rental creation form component.
+ * 
+ * Allows users to start a new rental by selecting:
+ * - An available car from a dropdown
+ * - Customer name
+ * - Start date (defaults to today)
+ * 
+ * Automatically selects the first available car when the form loads.
+ */
+
 import { ClipboardPlus } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -6,10 +17,15 @@ import { todayIsoDate } from "../../utils/dates";
 import { carDisplayName } from "../../utils/labels";
 
 type RentalFormProps = {
+  /** Cars currently available for rent. */
   availableCars: Car[];
+  /** ID of the currently selected car. */
   selectedCarId: string;
+  /** Callback when user selects a different car. */
   onSelectedCarChange: (carId: string) => void;
+  /** Callback when form is submitted with rental data. */
   onSubmit: (payload: RentalCreatePayload) => Promise<void>;
+  /** If true, disables the submit button during save. */
   isSaving: boolean;
 };
 

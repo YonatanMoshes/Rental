@@ -1,4 +1,10 @@
-﻿import logging
+﻿"""Business logic for fleet management.
+
+Handles car and rental operations with business rule validation.
+Protocols define interfaces for repository dependencies.
+"""
+
+import logging
 from datetime import date
 from typing import Protocol
 
@@ -53,12 +59,15 @@ class RentalRepository(Protocol):
 
 
 class FleetService:
+    """Core business logic service for managing the rental fleet."""
     def __init__(self, cars: CarRepository, rentals: RentalRepository):
+        """Initialize with injected repository dependencies."""
         self.cars = cars
         self.rentals = rentals
 
     @track_operation("add_car")
     async def add_car(self, data: CarCreate) -> CarDocument:
+        """Create a new car and add it to the fleet."""
         car = await self.cars.create(data)
         logger.info("Added car id=%s model=%s year=%s", car.id, car.model, car.year)
         await refresh_metrics(self.cars, self.rentals)
@@ -66,12 +75,19 @@ class FleetService:
 
     @track_operation("list_cars")
     async def list_cars(self, status: VehicleStatus | None = None) -> list[CarDocument]:
+        """List cars, optionally filtered by status."""
         cars = await self.cars.list(status=status)
         logger.info("Listed cars count=%s status=%s", len(cars), status)
         return cars
 
     @track_operation("update_car")
     async def update_car(self, car_id: str, data: CarUpdate) -> CarDocument:
+        """Update car details with business rule validation.
+        
+        Business rules:
+        - Cannot change status away from RENTED if an active rental exists
+        - Cannot mark car as RENTED directly; must use rental flow
+        """
         car = await self._require_car(car_id)
 
         if data.status is not None:
@@ -91,6 +107,10 @@ class FleetService:
 
     @track_operation("delete_car")
     async def delete_car(self, car_id: str) -> None:
+        """Delete a car with business rule validation.
+        
+        Cannot delete a car that has an active rental.
+        """
         car = await self._require_car(car_id)
         if await self.rentals.active_for_car(car.id):
             raise BusinessRuleError("Cannot delete a car with an active rental.")

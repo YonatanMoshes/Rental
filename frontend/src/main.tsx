@@ -1,3 +1,10 @@
+/**
+ * Application entry point.
+ * 
+ * Renders the root React component into the DOM and enables StrictMode
+ * for additional development-time checks.
+ */
+
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 

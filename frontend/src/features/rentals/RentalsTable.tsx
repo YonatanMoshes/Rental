@@ -1,11 +1,24 @@
+/**
+ * Rentals table component.
+ * 
+ * Displays all rentals (past and active) with:
+ * - Car details
+ * - Customer name
+ * - Start and end dates
+ * - Action button to end active rentals
+ */
+
 import { CheckCircle2 } from "lucide-react";
 
 import type { Car, Rental } from "../../types/fleet";
 import { carDisplayName } from "../../utils/labels";
 
 type RentalsTableProps = {
+  /** All cars (used for looking up car names). */
   cars: Car[];
+  /** All rentals to display. */
   rentals: Rental[];
+  /** Callback when user clicks 'End rental' button. */
   onEndRental: (rental: Rental) => Promise<void>;
 };
 

@@ -1,7 +1,18 @@
+/**
+ * Application header component.
+ * 
+ * Displays the app title and navigation links to:
+ * - API documentation
+ * - Prometheus metrics
+ * - Data refresh button
+ */
+
 import { Activity, BarChart3, Server } from "lucide-react";
 
 type AppHeaderProps = {
+  /** Callback when refresh button is clicked. */
   onRefresh: () => void;
+  /** If true, disables the refresh button during data loading. */
   isLoading: boolean;
 };
 

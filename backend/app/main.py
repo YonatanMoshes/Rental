@@ -1,3 +1,10 @@
+"""FastAPI application factory and lifecycle management.
+
+Handles app initialization, database connection, route registration, and error handling.
+The lifespan context manager ensures MongoDB connection is established on startup
+and properly closed on shutdown.
+"""
+
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -18,8 +25,18 @@ logger = logging.getLogger(__name__)
 
 
 def create_app(connect_database: bool = True) -> FastAPI:
+    """Create and configure FastAPI application.
+    
+    Args:
+        connect_database: If True, connects to MongoDB on startup.
+                         Set to False for testing without a database.
+    
+    Returns:
+        Configured FastAPI instance with all routes and error handlers.
+    """
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        """Manage app startup and shutdown events."""
         if connect_database:
             await connect_to_mongodb(settings)
             await ensure_database_indexes(get_database())
@@ -35,6 +52,7 @@ def create_app(connect_database: bool = True) -> FastAPI:
 
     @app.exception_handler(NotFoundError)
     async def not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:
+        """Handle 404 errors for missing resources."""
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content={"detail": str(exc)},
@@ -42,6 +60,7 @@ def create_app(connect_database: bool = True) -> FastAPI:
 
     @app.exception_handler(BusinessRuleError)
     async def business_rule_handler(request: Request, exc: BusinessRuleError) -> JSONResponse:
+        """Handle business logic violations (e.g., cannot delete car with active rental)."""
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
             content={"detail": str(exc)},

@@ -1,5 +1,19 @@
+# Docker Compose configuration for local development
+# 
+# Services:
+#   - frontend: React app (port 5173)
+#   - api: FastAPI backend (port 8000)
+#   - mongo: MongoDB database (port 27017)
+# 
+# Usage:
+#   docker-compose up        # Start all services
+#   docker-compose down      # Stop all services
+#   docker-compose down -v   # Stop and remove volumes (reset database)
+
 services:
   frontend:
+    # React application built with Vite
+    # Proxies /api requests to backend during development
     build:
       context: ./frontend
     container_name: rental-fleet-frontend
@@ -9,6 +23,8 @@ services:
       - api
 
   api:
+    # FastAPI backend application
+    # Serves REST API endpoints and Prometheus metrics
     build: .
     container_name: rental-fleet-api
     ports:
@@ -26,6 +42,8 @@ services:
       - mongo
 
   mongo:
+    # MongoDB NoSQL database
+    # Stores cars and rentals collections
     image: mongo:7
     container_name: rental-fleet-mongo
     ports:

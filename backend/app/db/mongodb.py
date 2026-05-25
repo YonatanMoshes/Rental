@@ -1,6 +1,8 @@
+import asyncio
 from typing import Any
 
 from pymongo import AsyncMongoClient
+from pymongo.errors import PyMongoError
 
 from backend.app.core.config import AppSettings
 
@@ -15,7 +17,14 @@ mongo_database = MongoDatabase()
 
 async def connect_to_mongodb(settings: AppSettings) -> None:
     client = AsyncMongoClient(settings.mongodb_uri)
-    await client.admin.command("ping")
+    for attempt in range(1, 11):
+        try:
+            await client.admin.command("ping")
+            break
+        except PyMongoError:
+            if attempt == 10:
+                raise
+            await asyncio.sleep(1)
     mongo_database.client = client
     mongo_database.database = client[settings.mongodb_database]
 

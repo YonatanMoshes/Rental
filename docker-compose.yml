@@ -1,4 +1,13 @@
-﻿services:
+services:
+  frontend:
+    build:
+      context: ./frontend
+    container_name: rental-fleet-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
   api:
     build: .
     container_name: rental-fleet-api

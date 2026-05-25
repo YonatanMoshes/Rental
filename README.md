@@ -1,14 +1,14 @@
 ﻿# Rental Fleet Manager
 
-Rental Fleet Manager is a MongoDB-backed FastAPI service for managing cars and rentals in a car rental company.
+Rental Fleet Manager is a full-stack car rental management system with a React frontend, FastAPI backend, and MongoDB database.
 
-Current stage: backend only. The React frontend will be added in the next stage.
 Current frontend: React + Vite in the `frontend/` folder.
+Current backend: FastAPI + MongoDB in the `backend/` folder.
 
 ## Architecture
 
 ```text
-Client / React / Swagger
+React frontend
         -> FastAPI routes
         -> FleetService business logic
         -> MongoDB repositories
@@ -79,6 +79,12 @@ npm.cmd run build
 ```powershell
 docker compose up --build
 ```
+
+Open:
+
+- React app: http://127.0.0.1:5173
+- API docs: http://127.0.0.1:8000/docs
+- MongoDB: localhost:27017
 
 Stop:
 

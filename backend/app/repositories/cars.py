@@ -56,7 +56,8 @@ class MongoCarRepository:
     async def count_by_status(self) -> dict[str, int]:
         counts = {status.value: 0 for status in VehicleStatus}
         pipeline = [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]
-        async for item in self.collection.aggregate(pipeline):
+        cursor = await self.collection.aggregate(pipeline)
+        async for item in cursor:
             counts[str(item["_id"])] = int(item["count"])
         return counts
 

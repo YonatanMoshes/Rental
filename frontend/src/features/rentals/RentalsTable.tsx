@@ -6,7 +6,7 @@ import { carDisplayName } from "../../utils/labels";
 type RentalsTableProps = {
   cars: Car[];
   rentals: Rental[];
-  onEndRental: (rentalId: string) => Promise<void>;
+  onEndRental: (rental: Rental) => Promise<void>;
 };
 
 export function RentalsTable({ cars, rentals, onEndRental }: RentalsTableProps) {
@@ -47,7 +47,7 @@ export function RentalsTable({ cars, rentals, onEndRental }: RentalsTableProps) 
                   <td data-label="End">{rental.end_date ?? "Open"}</td>
                   <td data-label="Actions">
                     {rental.end_date === null ? (
-                      <button type="button" onClick={() => onEndRental(rental.id)}>
+                      <button type="button" onClick={() => onEndRental(rental)}>
                         <CheckCircle2 size={17} aria-hidden="true" />
                         End rental
                       </button>

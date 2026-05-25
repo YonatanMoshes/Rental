@@ -100,9 +100,11 @@ export function DashboardPage() {
     }, "Car deleted.");
   }
 
-  async function handleEndRental(rentalId: string) {
+  async function handleEndRental(rental: Rental) {
     await runAction(async () => {
-      await endRental(rentalId, todayIsoDate());
+      const today = todayIsoDate();
+      const endDate = rental.start_date > today ? rental.start_date : today;
+      await endRental(rental.id, endDate);
     }, "Rental ended.");
   }
 

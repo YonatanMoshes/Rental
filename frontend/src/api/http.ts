@@ -15,14 +15,15 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   });
 
   if (!response.ok) {
-    let message = `${response.status} ${response.statusText}`;
+    const missingApi = path.startsWith("/api") && response.status === 404;
+    let message = missingApi
+      ? "Backend API is not available. Start FastAPI on port 8000 before using the dashboard."
+      : `${response.status} ${response.statusText}`;
     try {
       const body = (await response.json()) as { detail?: string };
       message = body.detail ?? message;
     } catch {
-      if (path.startsWith("/api") && response.status === 404) {
-        message = "Backend API is not available. Start FastAPI on port 8000 before using the dashboard.";
-      }
+      // Keep the message selected from the HTTP status above.
     }
     throw new ApiError(message, response.status);
   }

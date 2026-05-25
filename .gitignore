@@ -5,6 +5,9 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
+node_modules/
+dist/
+coverage/
 
 .env
 logs/

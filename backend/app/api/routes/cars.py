@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, Response, status
+﻿from fastapi import APIRouter, Depends, Query, Response, status
 
 from backend.app.api.dependencies import get_fleet_service
 from backend.app.models.enums import VehicleStatus

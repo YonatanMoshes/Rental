@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Response
+﻿from fastapi import APIRouter, Response
 
 from backend.app.core.metrics import metrics_response
 

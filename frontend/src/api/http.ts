@@ -21,7 +21,9 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
       : `${response.status} ${response.statusText}`;
     try {
       const body = (await response.json()) as { detail?: string };
-      message = body.detail ?? message;
+      if (!(missingApi && body.detail === "Not Found")) {
+        message = body.detail ?? message;
+      }
     } catch {
       // Keep the message selected from the HTTP status above.
     }

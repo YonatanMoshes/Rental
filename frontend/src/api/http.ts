@@ -20,7 +20,9 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
       const body = (await response.json()) as { detail?: string };
       message = body.detail ?? message;
     } catch {
-      // Keep the status text when the backend does not return JSON.
+      if (path.startsWith("/api") && response.status === 404) {
+        message = "Backend API is not available. Start FastAPI on port 8000 before using the dashboard.";
+      }
     }
     throw new ApiError(message, response.status);
   }

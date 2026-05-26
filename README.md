@@ -490,8 +490,6 @@ flowchart LR
 
 The user now waits only for the important main operation and the small event publish. The worker can process background work separately, and this is why the system is faster from the user's point of view. It is not that logging or metrics disappeared. They moved to the correct process. The API thread is now cleaner: it handles creating cars, updating cars, scheduling rentals, ending rentals, and checking that those requests do not violate the app logic. The worker handles the side jobs that are important for monitoring and auditing but not required before returning the user response.
 
-There is one important detail about statistics. The operation-duration statistics shown in the UI are still measured in the API process because only the API process knows exactly when a request or service operation started and ended. That measurement is tiny: it records elapsed time in memory and exposes it through `/api/operation-statistics`. The heavier fleet gauge refresh, event audit persistence, and processed-event logging are now handled by the worker.
-
 This design also improves reliability and scalability. If the worker is temporarily down, RabbitMQ can keep messages until the worker returns. If the system receives many events in the future, more worker containers can be added to process queue messages in parallel. The API can remain focused on commands, while the worker focuses on asynchronous processing. The same pattern could later support email notifications, reports, billing integration, or external analytics without making the main user request slower.
 
 

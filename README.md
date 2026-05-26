@@ -62,7 +62,7 @@ flowchart LR
 
 The direct user flow is simple: the user clicks in the React app, React sends an API request, FastAPI validates the data, the service checks whether the requested action is legal for this app, and MongoDB stores the result.
 
-The message queue flow happens after important business changes. For example, after a car is created, FastAPI publishes a `car.created` event to RabbitMQ. The worker consumes that event and stores it in the `fleet_events` MongoDB collection. This proves the system is using queue-based communication and gives a clean audit trail.
+The message queue flow happens after important fleet changes. For example, after a car is created, FastAPI publishes a `car.created` event to RabbitMQ and then the user-facing request can finish. The worker consumes that event later and handles the side jobs: it stores the event in the `fleet_events` MongoDB collection, writes the processed-event log line, and refreshes fleet gauge metrics. This proves the system is using queue-based communication and keeps slower observability work outside the main request path.
 
 ## 2. Backend Architecture
 
@@ -92,7 +92,8 @@ flowchart TB
     Service -->|"publishes events after successful changes"| Messaging
     Messaging -->|"queue consumer runs in"| Worker
     Routes -->|"uses shared errors and responses"| Core
-    Service -->|"updates metrics and logs app actions"| Core
+    Service -->|"records operation duration through decorators"| Core
+    Worker -->|"writes action logs and refreshes fleet gauges"| Core
 ```
 
 ### Why This Architecture Was Chosen
@@ -190,7 +191,7 @@ backend/app/services/fleet_service.py
 
 The service layer is the app logic layer. This is where the backend checks whether the requested action is legal in this rental system. A clearer way to describe it is: this layer protects the app from actions that do not make sense. For example, it prevents renting a car that is in maintenance, prevents deleting a car that has an open rental, and prevents ending a rental before its start date.
 
-The service layer receives clean Python objects from the route layer, such as `CarCreate` or `RentalCreate`. Then it asks repositories for the current data it needs. If the request is legal, it tells repositories to save or update data. After the data change succeeds, it refreshes metrics and publishes a RabbitMQ event. Finally, it returns the result back to the route layer.
+The service layer receives clean Python objects from the route layer, such as `CarCreate` or `RentalCreate`. Then it asks repositories for the current data it needs. If the request is legal, it tells repositories to save or update the required records. After the main data change succeeds, it publishes a RabbitMQ event and returns the result back to the route layer. Normal action logging and fleet gauge refreshes are handled by the worker after it consumes the event, so those side jobs do not slow down the HTTP response.
 
 Example: `start_rental` receives a `RentalCreate` object. It loads the car, checks if the car exists, checks if the car status is `available`, checks if there is already an active rental for that car, creates the rental, updates the car status to `rented`, publishes `rental.started`, and returns the created rental. This function is the best example of why the service layer exists: many things must happen in the correct order, and this logic should not be inside the route or the database repository.
 
@@ -264,14 +265,12 @@ Flow:
 flowchart LR
     Input["CarCreate<br/>model, year, status"]
     Repo["MongoCarRepository.create"]
-    Metrics["refresh_metrics"]
-    Event["RabbitMQ car.created"]
+    Queue["RabbitMQ car.created"]
     Output["CarDocument"]
 
     Input -->|"service receives clean schema object"| Repo
-    Repo -->|"repository inserts car into MongoDB"| Metrics
-    Metrics -->|"system counters are recalculated"| Event
-    Event -->|"publisher sends car.created to RabbitMQ"| Output
+    Repo -->|"repository inserts car into MongoDB"| Queue
+    Queue -->|"publisher sends event and service returns created car"| Output
 ```
 
 Why it is important:
@@ -295,7 +294,6 @@ flowchart TB
     CheckActive{"Already active rental?"}
     CreateRental["Create rental"]
     UpdateCar["Set car status to rented"]
-    Metrics["Refresh metrics"]
     Queue["Publish rental.started"]
     Response["Return rental"]
 
@@ -306,8 +304,7 @@ flowchart TB
     CheckActive -->|Yes| Reject
     CheckActive -->|No| CreateRental
     CreateRental -->|"repository saves rental document"| UpdateCar
-    UpdateCar -->|"car becomes rented"| Metrics
-    Metrics -->|"available/rented/open-rental counts refresh"| Queue
+    UpdateCar -->|"car becomes rented only if rental covers today"| Queue
     Queue -->|"rental.started event is published"| Response
 ```
 
@@ -331,14 +328,14 @@ Flow:
 4. Validate the end date.
 5. Save the end date.
 6. Update the car status back to `available`.
-7. Refresh metrics.
-8. Publish `rental.ended`.
+7. Publish `rental.ended`.
+8. The worker later logs the event, stores the event audit record, and refreshes fleet metrics.
 
 ## 5. Message Queue Architecture
 
-The message queue requirement is implemented with RabbitMQ.
+The message queue requirement is implemented with RabbitMQ, and it is now used for the important architectural reason: it separates the immediate user request from the slower side work that does not need to block the user. The browser still communicates with the backend through HTTP because a user needs an immediate success or error response when adding a car, editing a car, scheduling a rental, or ending a rental. RabbitMQ is used after the main action succeeds, so the API can publish a small event and let a separate worker process handle the follow-up observability work.
 
-RabbitMQ is not used for the browser request itself. The browser still uses HTTP because a user action needs an immediate response. RabbitMQ is used behind the backend for asynchronous communication between the API and the worker.
+In the current design, the API service focuses on the main legal action. For example, when a user creates a car, the API validates the request, checks the app logic, writes the car to MongoDB, publishes a `car.created` event, and returns the created car to the frontend. The API does not wait for the event audit write, the action log line, or the fleet gauge refresh to finish inside the same request. Those tasks are handled by the worker after it receives the message from RabbitMQ. This makes the request path smaller and faster because the main thread is responsible only for the work the user is directly waiting for.
 
 ### Queue Components
 
@@ -351,18 +348,30 @@ flowchart TB
     Queue["Durable Queue<br/>rental.fleet.events.audit"]
     Consumer["RabbitMQEventConsumer"]
     Worker["event_worker.py"]
+    EventProcessor["process_fleet_event"]
     EventRepo["MongoEventRepository"]
+    Metrics["refresh_metrics"]
+    Logger["worker logger"]
     Mongo["MongoDB fleet_events"]
+    Prometheus["Prometheus gauges"]
+    LogFile["logs/rental_fleet.log"]
 
     Service -->|"after legal app action succeeds, create event"| EventFactory
     EventFactory -->|"builds FleetEvent JSON shape"| Publisher
-    Publisher -->|"sends persistent message"| Exchange
+    Publisher -->|"sends small persistent JSON message"| Exchange
     Exchange -->|"routes by routing key fleet.event"| Queue
-    Queue -->|"holds message until worker consumes it"| Consumer
-    Consumer -->|"parses message body into FleetEvent"| Worker
-    Worker -->|"asks repository to audit the event"| EventRepo
+    Queue -->|"stores message until a worker is ready"| Consumer
+    Consumer -->|"parses message body into FleetEvent"| EventProcessor
+    Worker -->|"runs the consumer callback"| EventProcessor
+    EventProcessor -->|"saves audit record"| EventRepo
+    EventProcessor -->|"refreshes fleet gauge values"| Metrics
+    EventProcessor -->|"writes processed event line"| Logger
     EventRepo -->|"upserts event by event_id"| Mongo
+    Metrics -->|"updates available/rented/open rental counts"| Prometheus
+    Logger -->|"writes timestamped line"| LogFile
 ```
+
+The most important component is `process_fleet_event` in `backend/app/workers/event_worker.py`. This function is the worker's real unit of work. It receives one validated `FleetEvent`, saves it through `MongoEventRepository`, refreshes the fleet metrics by asking the car and rental repositories for current counts, and writes a clear worker log line. Because this function runs inside the worker container, the API request that created the event does not have to wait for those side jobs.
 
 ### Event Lifecycle
 
@@ -373,17 +382,25 @@ sequenceDiagram
     participant Rabbit as RabbitMQ
     participant Worker as Event Worker
     participant Repo as MongoEventRepository
+    participant Metrics as Metrics Refresh
+    participant Logs as Worker Log
     participant DB as MongoDB
 
     Service->>Publisher: publish(FleetEvent)
     Publisher->>Rabbit: send persistent message
     Rabbit-->>Publisher: accepted
+    Publisher-->>Service: publish finished
+    Service-->>Service: return HTTP response to user
     Rabbit-->>Worker: deliver message
-    Worker->>Repo: save(event)
+    Worker->>Repo: save(event audit)
     Repo->>DB: upsert by event_id
     DB-->>Repo: saved
+    Worker->>Metrics: refresh car and rental gauges
+    Worker->>Logs: write processed-event log line
     Worker-->>Rabbit: ack message
 ```
+
+The lifecycle is intentionally split into two parts. The first part is the user-facing request: the service publishes the event and returns the HTTP response. The second part is the background worker: RabbitMQ delivers the event, the worker processes the side jobs, and only then acknowledges the message. If the worker is temporarily unavailable, RabbitMQ keeps the message in the durable queue until the worker can consume it.
 
 ### What The API Publishes
 
@@ -395,6 +412,7 @@ The backend publishes these domain events:
 | `car.updated` | After a car is updated | Updated car state |
 | `car.deleted` | After a car is deleted | Deleted car data |
 | `rental.started` | After a rental starts | Rental id, car id, customer, start date |
+| `rental.plan_updated` | After a planned rental end date is edited | Updated rental state |
 | `rental.ended` | After a rental ends | Rental id, car id, customer, start date, end date |
 
 ### Main Queue Function: `RabbitMQEventPublisher.publish`
@@ -405,82 +423,48 @@ Location:
 backend/app/messaging/publisher.py
 ```
 
-What it receives:
+`RabbitMQEventPublisher.publish` receives a `FleetEvent` object from the service layer after the main database change has succeeded. Its responsibility is to cross the process boundary from the API container to RabbitMQ. The function makes sure there is an active RabbitMQ connection, converts the event into JSON, wraps it in a persistent RabbitMQ message, and publishes it with the routing key `fleet.event`. RabbitMQ then stores the message in the durable queue named `rental.fleet.events.audit`.
 
-- A `FleetEvent` object from the service layer.
+This function is important because the API and worker are separate processes. The service layer cannot directly call a worker function, because the worker is running in another container and may even be scaled into multiple worker containers later. RabbitMQ is the professional bridge between them. The API only needs to successfully publish the message; the worker can consume it independently.
 
-What it does:
+### Main Worker Functions
 
-1. Checks if a RabbitMQ exchange connection exists.
-2. If not connected, it connects to RabbitMQ.
-3. Converts the event to JSON.
-4. Creates a persistent RabbitMQ message.
-5. Publishes the message with routing key `fleet.event`.
-6. Logs that the event was published.
-
-What it gives to the next part:
-
-- RabbitMQ receives the event message and stores it in the durable queue.
-
-Why it is complex:
-
-- It is responsible for crossing process boundaries.
-- The API and worker are separate containers.
-- The publisher must connect to RabbitMQ, declare exchange/queue, bind the routing key, and send a durable message.
-
-### Main Worker Function: `RabbitMQEventConsumer._handle_message`
-
-Location:
+The worker side has two important functions:
 
 ```text
 backend/app/messaging/consumer.py
+backend/app/workers/event_worker.py
 ```
 
-What it receives:
+`RabbitMQEventConsumer._handle_message` receives the raw message from RabbitMQ. It opens RabbitMQ's message-processing context, validates the JSON body as a `FleetEvent`, and then calls the handler function that was provided by the worker. If the handler finishes successfully, RabbitMQ receives an acknowledgement and removes the message from the queue. If processing fails, the message can be requeued instead of silently disappearing.
 
-- A raw RabbitMQ message from the queue.
-
-What it does:
-
-1. Opens the RabbitMQ message processing context.
-2. Parses the message body as a `FleetEvent`.
-3. Calls the worker handler.
-4. The handler saves the event through `MongoEventRepository`.
-5. If everything succeeds, RabbitMQ receives an acknowledgement.
-6. If processing fails, the message can be requeued.
-
-What it gives to the next part:
-
-- A validated event object is passed into the worker handler.
-
-Why it is important:
-
-- This function is the bridge between RabbitMQ and the backend application logic.
-- It keeps queue processing separate from user-facing API requests.
+`process_fleet_event` receives the already validated event and performs the actual post-request work. It saves the event for auditing, refreshes the current fleet metrics, and writes the worker log entry. This is the function that proves the queue is not just decorative. It has real responsibilities that used to be part of the heavier request path.
 
 ## 6. Why The Queue Improves The System
 
-The queue improves the system because it decouples immediate user actions from background processing.
+The queue improves the system because it lets the API return after the required user-facing work is done, while a separate worker handles side work in the background. A request such as "add car" has one critical responsibility: validate the input and store the car. Logging the processed event, saving an audit copy of the event, and refreshing fleet gauge metrics are useful and professional, but the user should not have to wait for every one of those tasks before seeing the new car on the screen.
 
-Without a queue:
+Without this queue-based split, the request path would be longer:
 
 ```mermaid
 flowchart LR
     API["API request"]
     Work1["Database write"]
-    Work2["Audit logging"]
-    Work3["Future email/report/integration"]
+    Work2["Save event audit row"]
+    Work3["Refresh fleet metrics"]
+    Work4["Write action log"]
     Response["Return response"]
 
     API -->|"must finish before response"| Work1
     Work1 -->|"must finish before response"| Work2
     Work2 -->|"must finish before response"| Work3
-    Work3 -->|"only then user gets answer"| Response
+    Work3 -->|"must finish before response"| Work4
+    Work4 -->|"only then user gets answer"| Response
 ```
 
-In this design, the user waits for every extra task.
+In that design, the user waits for work that is not required to answer the request. The car may already be created, but the response is still delayed because the same thread is also doing audit, metrics, and logging work.
 
-With a queue:
+With the queue, the request path is shorter:
 
 ```mermaid
 flowchart LR
@@ -490,30 +474,34 @@ flowchart LR
     Response["Return response"]
     Queue["RabbitMQ"]
     Worker["Worker handles extra tasks"]
+    Audit["Save event audit row"]
+    Metrics["Refresh fleet metrics"]
+    Logs["Write action log"]
 
     API -->|"does required database change"| Work1
     Work1 -->|"publishes small event message"| Publish
     Publish -->|"user gets response quickly"| Response
     Publish -->|"background work moves to queue"| Queue
-    Queue -->|"worker handles it later"| Worker
+    Queue -->|"worker consumes event later"| Worker
+    Worker -->|"stores event for audit"| Audit
+    Worker -->|"updates fleet gauges"| Metrics
+    Worker -->|"writes processed-event log"| Logs
 ```
 
-The user waits only for the important main operation. The worker can process background work separately.
+The user now waits only for the important main operation and the small event publish. The worker can process background work separately, and this is why the system is faster from the user's point of view. It is not that logging or metrics disappeared. They moved to the correct process. The API thread is now cleaner: it handles creating cars, updating cars, scheduling rentals, ending rentals, and checking that those requests do not violate the app logic. The worker handles the side jobs that are important for monitoring and auditing but not required before returning the user response.
 
-Benefits:
+There is one important detail about statistics. The operation-duration statistics shown in the UI are still measured in the API process because only the API process knows exactly when a request or service operation started and ended. That measurement is tiny: it records elapsed time in memory and exposes it through `/api/operation-statistics`. The heavier fleet gauge refresh, event audit persistence, and processed-event logging are now handled by the worker.
 
-- Better performance: the API can return faster because background work is moved out of the request path.
-- Better reliability: if the worker is temporarily down, RabbitMQ can keep messages until the worker returns.
-- Better scalability: more workers can be added if there are many events.
-- Better separation: the API focuses on business commands, the worker focuses on asynchronous processing.
-- Better future growth: the same queue can later support emails, reports, notifications, billing, and external integrations.
+This design also improves reliability and scalability. If the worker is temporarily down, RabbitMQ can keep messages until the worker returns. If the system receives many events in the future, more worker containers can be added to process queue messages in parallel. The API can remain focused on commands, while the worker focuses on asynchronous processing. The same pattern could later support email notifications, reports, billing integration, or external analytics without making the main user request slower.
 
 
 ## 7. Frontend Architecture
 
-The frontend is built with React, Vite, and TypeScript.
+The frontend is built with React, Vite, and TypeScript. React was chosen because it lets the UI be built from small components instead of one large page file. Each component owns one clear part of the screen: a form, a table, a header, a summary card, or an observability panel. This makes the frontend easier to understand, easier to test manually, and easier to extend later. For example, adding a new field to the car form does not require changing the rental table, and changing the way status badges look does not require touching the API client.
 
-It is organized by responsibility:
+TypeScript makes the React code more professional because the frontend knows the shape of the data it expects from the backend. The `Car`, `Rental`, `CarCreatePayload`, and `RentalCreatePayload` types in `frontend/src/types/fleet.ts` act like a contract between the frontend and the FastAPI backend. If the frontend tries to send the wrong field name or use a missing property, TypeScript can catch that during the build instead of letting the error appear only in the browser.
+
+The structure follows the same idea as SOLID principles. The most important principle here is single responsibility: each file has one main reason to change. API files change when backend endpoints change. Form components change when user input changes. Table components change when display or table actions change. Utility files change when shared date or label formatting changes. This is not a formal class-based SOLID design, but the same professional idea is used: keep responsibilities separated so the project can grow without becoming messy.
 
 ```mermaid
 flowchart TB
@@ -541,7 +529,7 @@ flowchart TB
     App -->|"loads global app styling"| Styles
 ```
 
-The frontend does not contain database logic. It only manages UI state and sends API requests.
+The frontend does not contain database logic, queue logic, or backend validation logic. It manages what the user sees, keeps temporary UI state such as loading and selected car values, and sends typed requests to the backend. The backend remains responsible for deciding whether a requested action is legal, because a user can bypass the UI and call the API directly. This separation keeps the frontend focused on user experience and keeps the backend responsible for protecting the app state.
 
 ## 8. Frontend Components
 
@@ -553,35 +541,11 @@ Location:
 frontend/src/pages/DashboardPage.tsx
 ```
 
-What it receives:
+`DashboardPage` is the integration component for the whole screen. It does not receive props from another page because this app has one main dashboard view. When the page opens, it calls the API client to load cars, rentals, and operation statistics. It stores the main frontend state: the array of cars, the array of rentals, the selected status filter, the selected car for scheduling, loading state, saving state, success messages, and error messages.
 
-- It does not receive external props.
-- It loads cars and rentals from the backend when the page opens.
+This component is responsible for connecting the smaller components together. It passes car data into `CarsTable`, rental data into `RentalsTable`, reservable cars into `RentalForm`, and action callbacks into the forms and tables. The child components do not know how to call the backend directly. They only say what the user wants to do, and `DashboardPage` decides which API function should run. This keeps the child components reusable and focused on UI.
 
-What it does:
-
-- Stores `cars`, `rentals`, filters, selected rental car id, loading state, saving state, success messages, and errors.
-- Calls `listCars()` and `listRentals()` to load dashboard data.
-- Passes data into child components.
-- Receives form submissions from child components.
-- Calls API functions to create cars, update statuses, delete cars, start rentals, and end rentals.
-- Reloads the dashboard after every successful action.
-
-What it gives to the next components:
-
-- Car data goes to `CarsTable`.
-- Rental data goes to `RentalsTable`.
-- Available cars go to `RentalForm`.
-- Callback functions go to forms and tables.
-
-Main complex function:
-
-- `runAction`.
-
-Why it matters:
-
-- All user actions share the same pattern: set saving state, clear old messages, run API call, reload data, show success or error.
-- Instead of repeating that logic in every handler, `runAction` centralizes it.
+The most important function in this component is `runAction`. Every user action has the same basic flow: clear old messages, mark the screen as saving, run the API call, reload the dashboard data, show a success message if it worked, or show the backend error message if it failed. Instead of duplicating that flow in every handler, `runAction` centralizes it. This follows the DRY idea and makes future changes safer, because the loading and error behavior can be improved in one place.
 
 ### `CarForm`
 
@@ -591,25 +555,9 @@ Location:
 frontend/src/features/cars/CarForm.tsx
 ```
 
-Purpose:
+`CarForm` is responsible only for collecting the information needed to create a car. It owns local input state for the model, year, and initial status. When the form is submitted, it creates a `CarCreatePayload` and passes that payload upward through the `onSubmit` callback. It does not import `fleetApi.ts`, and it does not know whether the backend uses MongoDB, SQL, or anything else. This keeps the component simple: its job is user input, not persistence.
 
-- Lets the user add a new car.
-
-What it collects:
-
-- Car model.
-- Car year.
-- Initial status.
-
-What it sends upward:
-
-- A `CarCreatePayload` object.
-
-Integration:
-
-- `DashboardPage` passes `handleCreateCar` into `CarForm`.
-- `CarForm` submits the payload.
-- `DashboardPage` calls `createCar(payload)`.
+This component shows why React components are useful. The form can clear itself after a successful submit, validate required fields through normal input attributes, and disable the button while a save is running. All of that UI behavior stays inside the form, while `DashboardPage` remains responsible for the actual API action.
 
 ### `CarsTable`
 
@@ -619,32 +567,9 @@ Location:
 frontend/src/features/cars/CarsTable.tsx
 ```
 
-Purpose:
+`CarsTable` is responsible for displaying the fleet and exposing car-related actions. It receives cars, rentals, the current status filter, and callback functions from `DashboardPage`. It filters the visible cars by status, finds the current active rental for each car when one exists, and renders the correct action buttons. For example, the `Rent` button appears only for available cars, and the maintenance toggle is hidden for cars that are currently rented.
 
-- Shows all cars.
-- Shows each car status.
-- Shows active rental information.
-- Provides actions: rent, maintenance/available toggle, delete.
-
-What it receives:
-
-- `cars`
-- `rentals`
-- `statusFilter`
-- action callbacks
-
-What it does:
-
-- Filters cars by status.
-- Finds active rental information for each car.
-- Shows the `Rent` button only for available cars.
-- Shows maintenance toggle only for cars that are not rented.
-
-What it sends upward:
-
-- Selected car id for rental.
-- Status update requests.
-- Delete requests.
+The table does not directly change the backend. When the user clicks an action, the table calls a callback such as `onUpdateStatus`, `onDeleteCar`, or `onSelectForRental`. This keeps the component aligned with single responsibility: it displays cars and reports user intent, while the parent component decides how to execute that intent.
 
 ### `RentalForm`
 
@@ -654,29 +579,9 @@ Location:
 frontend/src/features/rentals/RentalForm.tsx
 ```
 
-Purpose:
+`RentalForm` is responsible for scheduling a new rental. It receives the cars that are allowed to be reserved, the currently selected car id, and the callbacks needed to change the selected car or submit the rental. It collects the customer name, planned start date, and planned return date. The date inputs prevent choosing past dates in the UI, and the backend repeats the same validation so the rule is protected even if someone bypasses the browser.
 
-- Starts a new rental.
-
-What it receives:
-
-- Only available cars.
-- The currently selected car id.
-- A callback to update selected car id.
-- A submit callback.
-
-What it does:
-
-- Shows a dropdown of available cars.
-- Collects customer name.
-- Collects start date.
-- Automatically resets the selected car if the old selected car is no longer available.
-
-Why the selected-car logic matters:
-
-- A car may move from available to maintenance or rented.
-- The UI must not keep sending a stale car id.
-- The form now ensures it submits a valid available car id.
+The selected-car logic is important because frontend state can become stale. A user may select a car, then another action may make that car unavailable or move it to maintenance. `RentalForm` watches the available car list and resets the selected id if the old id is no longer valid. This avoids sending a bad request when the UI already knows the selected car should not be used.
 
 ### `RentalsTable`
 
@@ -686,31 +591,20 @@ Location:
 frontend/src/features/rentals/RentalsTable.tsx
 ```
 
-Purpose:
+`RentalsTable` is responsible for displaying current, future, and closed rentals. It receives all cars and all rentals so it can turn a rental's `car_id` into a readable car name. It shows the customer, planned start date, planned return date, actual end date, and the correct action for the rental state.
 
-- Shows rental records.
-- Shows whether each rental is open or closed.
-- Lets the user end an open rental.
-
-What it receives:
-
-- All cars.
-- All rentals.
-- An `onEndRental` callback.
-
-What it does:
-
-- Converts car ids into readable car names.
-- Shows customer, start date, and end date.
-- Shows `End rental` for open rentals.
+Open rentals can have their planned return date edited from the table, and rentals that have already started can be ended immediately with the `End now` action. Future rentals are shown as scheduled instead of being treated as active rentals today. This distinction matters because a future reservation should block overlapping future reservations, but it should not make the car appear rented right now.
 
 ### Shared Components
 
 | Component | Location | Purpose |
 |---|---|---|
-| `AppHeader` | `frontend/src/components/AppHeader.tsx` | Top header and refresh action. |
-| `StatusBadge` | `frontend/src/components/StatusBadge.tsx` | Visual status label for cars. |
-| `SummaryTile` | `frontend/src/components/SummaryTile.tsx` | Dashboard summary numbers. |
+| `AppHeader` | `frontend/src/components/AppHeader.tsx` | Renders the title area, the Logs link, the Statistics link, and the Refresh button. It keeps these global navigation actions out of the dashboard body. |
+| `StatusBadge` | `frontend/src/components/StatusBadge.tsx` | Converts backend status values into consistent visual labels. This avoids rewriting status styling in every table. |
+| `SummaryTile` | `frontend/src/components/SummaryTile.tsx` | Displays dashboard totals such as total cars, available cars, maintenance cars, and open rentals in a reusable visual format. |
+| `OperationStatisticsPanel` | `frontend/src/features/observability/OperationStatisticsPanel.tsx` | Shows average request/operation timing per backend operation and the overall average across all measured operations. |
+
+These shared components make the frontend easier to maintain because repeated UI ideas live in one place. This is the React component model in practice: the app is built from small pieces, and each piece can be understood without reading the entire project.
 
 ## 9. Frontend To Backend Communication
 
@@ -976,19 +870,11 @@ Location:
 frontend/nginx.conf
 ```
 
-What it does:
+Nginx is the web server inside the frontend container. The React build produces static files: `index.html`, JavaScript files, and CSS files. Nginx serves those files efficiently to the browser. This is why the final Docker image does not need to run the Vite development server or keep Node.js running in production mode.
 
-- Serves React static files.
-- Proxies `/api/` to `http://api:8000/api/`.
-- Proxies `/health` to `http://api:8000/health`.
-- Proxies `/metrics` to `http://api:8000/metrics`.
-- Uses `try_files` so React routes still load correctly.
+Nginx also works as a reverse proxy for backend calls. The React code can call `/api/cars`, `/api/rentals`, `/api/logs`, or `/api/operation-statistics` as normal browser paths. Nginx receives those requests and forwards them to `http://api:8000`, where `api` is the Docker Compose service name for the FastAPI container. This is useful because the browser does not need to know Docker's internal network addresses. The browser only talks to `http://127.0.0.1:5173`, and Nginx quietly forwards backend requests inside the Docker network.
 
-Why this matters:
-
-- In the browser, the frontend can call `/api/cars`.
-- Nginx forwards that request to the backend container named `api`.
-- The browser does not need to know Docker internal container addresses.
+The `try_files $uri $uri/ /index.html;` line is also important for React. A React app is a single-page application, which means the browser loads `index.html` and React controls what appears on the screen. If a user refreshes a frontend route, Nginx should still return `index.html` so React can render the page. Without `try_files`, direct refreshes on frontend routes can become 404 errors.
 
 ### MongoDB Docker Setup
 
@@ -1051,8 +937,8 @@ Service integration:
 | Service | Built from | Talks to | Purpose |
 |---|---|---|---|
 | `frontend` | `frontend/Dockerfile` | `api` | Serves React and proxies API requests. |
-| `api` | root `Dockerfile` | `mongo`, `rabbitmq` | Handles REST API, app logic checks, metrics, and event publishing. |
-| `worker` | root `Dockerfile` | `mongo`, `rabbitmq` | Consumes queue events and stores them in MongoDB. |
+| `api` | root `Dockerfile` | `mongo`, `rabbitmq` | Handles REST API, app logic checks, required database writes, operation timing, and event publishing. |
+| `worker` | root `Dockerfile` | `mongo`, `rabbitmq` | Consumes queue events, stores event audits, writes processed-event logs, and refreshes fleet metrics. |
 | `mongo` | `mongo:7` image | `api`, `worker` | Stores cars, rentals, and events. |
 | `rabbitmq` | `rabbitmq:3-management` image | `api`, `worker` | Message queue between API and worker. |
 
@@ -1062,6 +948,8 @@ Internal Docker networking:
 - The API connects to RabbitMQ using `amqp://guest:guest@rabbitmq:5672/`.
 - The frontend Nginx proxy connects to the backend using `http://api:8000`.
 - These names work because Docker Compose creates an internal network where services can reach each other by service name.
+
+The API and worker containers also receive `LOG_TIMEZONE=Asia/Jerusalem` and `TZ=Asia/Jerusalem`. This matters because containers often default to UTC time. The backend logging formatter reads `LOG_TIMEZONE`, so log lines in `logs/rental_fleet.log` use the same local hour that you see on your computer in Israel time.
 
 ## 12. How To Run
 
@@ -1199,62 +1087,153 @@ If the queue is working, actions like adding a car or starting a rental create e
 ```
 ## 14. Testing Guide
 
-The project has many tests the backend test suite contains 20 passing tests. These tests are important because they prove the main app logic works without needing to manually click through the UI every time.
+The backend test suite currently contains 22 passing tests. These tests are important because they prove the main app logic works without needing to manually click through the UI every time. The tests are separated by responsibility in the same way as the backend code: service tests check the logic directly, API tests check the FastAPI routes, repository tests check MongoDB adapter behavior, worker tests check the RabbitMQ event-worker responsibilities, and logging tests check infrastructure behavior such as timestamp formatting.
 
-Run all backend tests:
+To run the full backend test suite, open PowerShell in the project root and run:
 
 ```powershell
 cd C:\Users\User\OneDrive\Desktop\Rental
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-Current passing output:
+Current passing output looks like this:
 
 ```text
-....................                                                     [100%]
-20 passed in 0.97s
+.....................                                                    [100%]
+22 passed
 ```
 
-### Important Unit Tests
+Running all tests is the normal command before committing because it proves the backend still works as one system. When you are working on one area, you can run only the related file or even one exact test. This is faster while developing and more professional than clicking randomly through the app.
+
+### Service Unit Tests
+
+The service tests are in `tests/backend/test_fleet_service.py`. They call `FleetService` directly with in-memory repositories, so they do not need Docker, MongoDB, or RabbitMQ. These are true unit tests for the app logic. They prove rules such as "a car in maintenance cannot be rented", "future reservations do not make the car rented today", "overlapping reservations are rejected", and "ending a current rental makes the car available again".
+
+Run all service unit tests:
+
+```powershell
+cd C:\Users\User\OneDrive\Desktop\Rental
+.\.venv\Scripts\python.exe -m pytest tests/backend/test_fleet_service.py
+```
+
+Run one exact service test:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/backend/test_fleet_service.py::test_future_rentals_keep_car_available_and_reject_only_overlaps
+```
 
 | Test | File | What it proves |
 |---|---|---|
-| `test_add_and_list_cars` | `tests/backend/test_fleet_service.py` | Proves `FleetService.add_car` creates a car and `FleetService.list_cars` returns it. This is a basic unit test for the service layer without using the real database. |
-| `test_add_car_publishes_queue_event` | `tests/backend/test_fleet_service.py` | Proves that when a car is added, the service publishes a `car.created` event. This checks the message-queue integration point without needing RabbitMQ in the unit test. |
-| `test_future_rentals_keep_car_available_and_reject_only_overlaps` | `tests/backend/test_fleet_service.py` | Proves future rentals do not immediately change a car to `rented`, and also proves overlapping rental dates for the same car are rejected. |
-| `test_rejects_past_rental_dates` | `tests/backend/test_fleet_service.py` | Proves the service rejects rental schedules that start in the past or return in the past. This protects the backend even if the UI is bypassed. |
-| `test_update_rental_planned_end_date` | `tests/backend/test_fleet_service.py` | Proves an open rental can have its planned return date edited when the new date is legal. |
+| `test_add_and_list_cars` | `tests/backend/test_fleet_service.py` | Proves `FleetService.add_car` creates a car and `FleetService.list_cars` returns it without using a real database. |
+| `test_add_car_publishes_queue_event` | `tests/backend/test_fleet_service.py` | Proves that adding a car publishes a `car.created` event, which is the service-to-queue integration point. |
+| `test_future_rentals_keep_car_available_and_reject_only_overlaps` | `tests/backend/test_fleet_service.py` | Proves a future reservation does not make the car rented today, while overlapping reservations for the same date range are rejected. |
+| `test_rejects_past_rental_dates` | `tests/backend/test_fleet_service.py` | Proves the backend rejects planned start dates and planned return dates that are already in the past. |
+| `test_update_rental_planned_end_date` | `tests/backend/test_fleet_service.py` | Proves an open rental can update its planned return date when the new date is legal. |
 | `test_end_rental_marks_car_available` | `tests/backend/test_fleet_service.py` | Proves ending a current rental closes the rental and returns the car to `available` when no other current rental exists. |
 
-### Important API Tests
+### API Tests
+
+The API tests are in `tests/backend/test_api.py`. They use FastAPI's `TestClient`, so they call the backend through HTTP routes instead of calling `FleetService` directly. This is useful because it proves the route layer, schema validation, dependency injection, service layer, and error handlers work together. These tests still use in-memory repositories, so they remain fast and do not require Docker.
+
+Run all API tests:
+
+```powershell
+cd C:\Users\User\OneDrive\Desktop\Rental
+.\.venv\Scripts\python.exe -m pytest tests/backend/test_api.py
+```
+
+Run one exact API test:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/backend/test_api.py::test_car_and_rental_flow_over_api
+```
 
 | Test | File | What it proves |
 |---|---|---|
-| `test_car_and_rental_flow_over_api` | `tests/backend/test_api.py` | Proves the real FastAPI endpoints can create a car, schedule a rental, update the planned return date, end the rental, and return the car to `available`. |
+| `test_car_and_rental_flow_over_api` | `tests/backend/test_api.py` | Proves the real HTTP endpoints can create a car, schedule a rental, update the planned return date, end the rental, and return the car to `available`. |
 | `test_rejects_second_active_rental_for_same_car` | `tests/backend/test_api.py` | Proves the API returns `409 Conflict` when another rental overlaps the same car's date range. |
 | `test_future_rentals_do_not_make_car_rented_now` | `tests/backend/test_api.py` | Proves future reservations can be created without making the car unavailable today. |
-| `test_operation_statistics_endpoint_is_available` | `tests/backend/test_api.py` | Proves `/api/operation-statistics` returns the timing data used by the statistics UI. |
-| `test_logs_endpoint_is_available` | `tests/backend/test_api.py` | Proves `/api/logs` returns plain text so the UI's `Logs` button has a real backend endpoint. |
+| `test_operation_statistics_endpoint_is_available` | `tests/backend/test_api.py` | Proves `/api/operation-statistics` returns the timing data used by the Statistics UI. |
+| `test_logs_endpoint_is_available` | `tests/backend/test_api.py` | Proves `/api/logs` returns plain text so the UI's Logs button has a real backend endpoint. |
 
-### Repository Test
+### Worker And Queue Tests
+
+The worker test is in `tests/backend/test_event_worker.py`. It does not start a real RabbitMQ server. Instead, it tests the worker's event-processing function directly with fake repositories and a fake logger. This proves the worker is responsible for the post-request jobs: saving the consumed event, refreshing metrics, and logging the processed event.
+
+Run the worker test:
+
+```powershell
+cd C:\Users\User\OneDrive\Desktop\Rental
+.\.venv\Scripts\python.exe -m pytest tests/backend/test_event_worker.py
+```
+
+Run the exact worker test:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/backend/test_event_worker.py::test_worker_processes_event_logging_and_metrics
+```
 
 | Test | File | What it proves |
 |---|---|---|
-| `test_count_by_status_awaits_async_mongo_aggregate` | `tests/backend/test_mongo_repositories.py` | Proves the Mongo car repository handles async MongoDB aggregation correctly when counting cars by status. |
+| `test_worker_processes_event_logging_and_metrics` | `tests/backend/test_event_worker.py` | Proves one queue event causes the worker to save the event, refresh fleet metrics, and write the processed-event log call. |
+
+### Repository Tests
+
+The repository test is in `tests/backend/test_mongo_repositories.py`. It uses fake MongoDB collection objects to check repository behavior without starting a real MongoDB server. This is useful because repository bugs can be caught quickly, while full Docker-based checks can be saved for final verification.
+
+Run the repository test file:
+
+```powershell
+cd C:\Users\User\OneDrive\Desktop\Rental
+.\.venv\Scripts\python.exe -m pytest tests/backend/test_mongo_repositories.py
+```
+
+Run the exact repository test:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/backend/test_mongo_repositories.py::test_count_by_status_awaits_async_mongo_aggregate
+```
+
+| Test | File | What it proves |
+|---|---|---|
+| `test_count_by_status_awaits_async_mongo_aggregate` | `tests/backend/test_mongo_repositories.py` | Proves the Mongo car repository correctly awaits MongoDB aggregation before reading car status counts for metrics. |
+
+### Logging Test
+
+The logging test is in `tests/backend/test_logging.py`. It checks the timezone formatter directly. This matters because Docker containers often use UTC time by default, but the project should show log timestamps in Israel time when `LOG_TIMEZONE=Asia/Jerusalem` is configured.
+
+Run the logging test file:
+
+```powershell
+cd C:\Users\User\OneDrive\Desktop\Rental
+.\.venv\Scripts\python.exe -m pytest tests/backend/test_logging.py
+```
+
+Run the exact logging test:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/backend/test_logging.py::test_timezone_formatter_uses_configured_timezone
+```
+
+| Test | File | What it proves |
+|---|---|---|
+| `test_timezone_formatter_uses_configured_timezone` | `tests/backend/test_logging.py` | Proves a UTC log record from `14:06` is rendered as `17:06` when the configured timezone is `Asia/Jerusalem`. |
 
 ### Frontend Build Check
 
-Run this to verify the React code compiles:
+The frontend check is not a pytest test. It is a TypeScript and Vite build check. It proves that the React code compiles, the TypeScript types are valid, and the production frontend bundle can be generated.
+
+Run this command:
 
 ```powershell
 cd C:\Users\User\OneDrive\Desktop\Rental\frontend
 npm.cmd run build
 ```
 
-Expected successful result:
+Expected successful result includes Vite's build success line:
 
 ```text
-built successfully
+built
 ```
 
 ## Final Architecture Summary

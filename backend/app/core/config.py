@@ -21,6 +21,7 @@ class AppSettings(BaseSettings):
     event_routing_key: str = "fleet.event"
     log_level: str = "INFO"
     log_file: str = "logs/rental_fleet.log"
+    log_timezone: str = "Asia/Jerusalem"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

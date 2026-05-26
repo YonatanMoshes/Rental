@@ -21,7 +21,7 @@ from backend.app.db.mongodb import close_mongodb_connection, connect_to_mongodb,
 from backend.app.messaging.publisher import RabbitMQEventPublisher
 
 settings = get_settings()
-configure_logging(settings.log_level, settings.log_file)
+configure_logging(settings.log_level, settings.log_file, settings.log_timezone)
 logger = logging.getLogger(__name__)
 
 

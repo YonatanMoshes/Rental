@@ -44,6 +44,8 @@ services:
       EVENT_ROUTING_KEY: fleet.event
       LOG_LEVEL: INFO
       LOG_FILE: /app/logs/rental_fleet.log
+      LOG_TIMEZONE: Asia/Jerusalem
+      TZ: Asia/Jerusalem
     volumes:
       - rental-fleet-logs:/app/logs
     depends_on:
@@ -68,6 +70,8 @@ services:
       EVENT_ROUTING_KEY: fleet.event
       LOG_LEVEL: INFO
       LOG_FILE: /app/logs/rental_fleet.log
+      LOG_TIMEZONE: Asia/Jerusalem
+      TZ: Asia/Jerusalem
     volumes:
       - rental-fleet-logs:/app/logs
     depends_on:

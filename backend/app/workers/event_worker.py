@@ -42,7 +42,7 @@ async def process_fleet_event(
 async def run_worker() -> None:
     """Start the queue consumer and keep it running until the process stops."""
     settings = get_settings()
-    configure_logging(settings.log_level, settings.log_file)
+    configure_logging(settings.log_level, settings.log_file, settings.log_timezone)
     logger = logging.getLogger(__name__)
 
     await connect_to_mongodb(settings)

@@ -10,8 +10,6 @@ from typing import Protocol
 
 from backend.app.core.errors import BusinessRuleError, NotFoundError
 from backend.app.core.metrics import refresh_metrics, track_operation
-from backend.app.messaging.events import FleetEvent, car_event, rental_event
-from backend.app.messaging.publisher import EventPublisher, NoOpEventPublisher
 from backend.app.models.documents import CarDocument, RentalDocument
 from backend.app.models.enums import VehicleStatus
 from backend.app.schemas.cars import CarCreate, CarUpdate
@@ -62,16 +60,10 @@ class RentalRepository(Protocol):
 
 class FleetService:
     """Core business logic service for managing the rental fleet."""
-    def __init__(
-        self,
-        cars: CarRepository,
-        rentals: RentalRepository,
-        event_publisher: EventPublisher | None = None,
-    ):
+    def __init__(self, cars: CarRepository, rentals: RentalRepository):
         """Initialize with injected repository dependencies."""
         self.cars = cars
         self.rentals = rentals
-        self.event_publisher = event_publisher or NoOpEventPublisher()
 
     @track_operation("add_car")
     async def add_car(self, data: CarCreate) -> CarDocument:
@@ -79,7 +71,6 @@ class FleetService:
         car = await self.cars.create(data)
         logger.info("Added car id=%s model=%s year=%s", car.id, car.model, car.year)
         await refresh_metrics(self.cars, self.rentals)
-        await self._publish_event(car_event("car.created", car))
         return car
 
     @track_operation("list_cars")
@@ -112,7 +103,6 @@ class FleetService:
 
         logger.info("Updated car id=%s status=%s", updated.id, updated.status)
         await refresh_metrics(self.cars, self.rentals)
-        await self._publish_event(car_event("car.updated", updated))
         return updated
 
     @track_operation("delete_car")
@@ -131,7 +121,6 @@ class FleetService:
 
         logger.info("Deleted car id=%s", car.id)
         await refresh_metrics(self.cars, self.rentals)
-        await self._publish_event(car_event("car.deleted", car))
 
     @track_operation("start_rental")
     async def start_rental(self, data: RentalCreate) -> RentalDocument:
@@ -151,7 +140,6 @@ class FleetService:
             rental.customer_name,
         )
         await refresh_metrics(self.cars, self.rentals)
-        await self._publish_event(rental_event("rental.started", rental))
         return rental
 
     @track_operation("list_rentals")
@@ -179,7 +167,6 @@ class FleetService:
         await self.cars.update(rental.car_id, CarUpdate(status=VehicleStatus.AVAILABLE))
         logger.info("Ended rental id=%s car_id=%s", rental.id, rental.car_id)
         await refresh_metrics(self.cars, self.rentals)
-        await self._publish_event(rental_event("rental.ended", closed_rental))
         return closed_rental
 
     async def _require_car(self, car_id: str) -> CarDocument:
@@ -187,9 +174,3 @@ class FleetService:
         if car is None:
             raise NotFoundError(f"Car {car_id} was not found.")
         return car
-
-    async def _publish_event(self, event: FleetEvent) -> None:
-        try:
-            await self.event_publisher.publish(event)
-        except Exception:
-            logger.exception("Failed to publish fleet event event_type=%s", event.event_type)

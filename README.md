@@ -507,10 +507,6 @@ Benefits:
 - Better separation: the API focuses on business commands, the worker focuses on asynchronous processing.
 - Better future growth: the same queue can later support emails, reports, notifications, billing, and external integrations.
 
-Important note:
-
-- The current event publishing is intentionally simple and appropriate for this exercise.
-- A larger production system could add the outbox pattern to guarantee that database writes and event publishing are committed together.
 
 ## 7. Frontend Architecture
 

@@ -138,6 +138,49 @@ def test_future_rentals_keep_car_available_and_reject_only_overlaps(fleet_servic
     asyncio.run(scenario())
 
 
+def test_rented_filter_returns_only_cars_rented_today(fleet_service):
+    """The rented filter should ignore future reservations and closed rentals."""
+    async def scenario():
+        """Create current, future, and closed rentals, then filter rented cars."""
+        today = date.today()
+        current_car = await fleet_service.add_car(CarCreate(model="Current Rental", year=2024))
+        future_car = await fleet_service.add_car(CarCreate(model="Future Rental", year=2024))
+        closed_car = await fleet_service.add_car(CarCreate(model="Closed Rental", year=2024))
+
+        current_rental = await fleet_service.start_rental(
+            RentalCreate(
+                car_id=current_car.id,
+                customer_name="Current Customer",
+                start_date=today,
+                planned_end_date=today + timedelta(days=2),
+            )
+        )
+        await fleet_service.start_rental(
+            RentalCreate(
+                car_id=future_car.id,
+                customer_name="Future Customer",
+                start_date=today + timedelta(days=7),
+                planned_end_date=today + timedelta(days=9),
+            )
+        )
+        closed_rental = await fleet_service.start_rental(
+            RentalCreate(
+                car_id=closed_car.id,
+                customer_name="Closed Customer",
+                start_date=today,
+                planned_end_date=today + timedelta(days=1),
+            )
+        )
+        await fleet_service.end_rental(closed_rental.id, end_date=today)
+
+        rented_cars = await fleet_service.list_cars(status=VehicleStatus.RENTED)
+
+        assert [car.id for car in rented_cars] == [current_car.id]
+        assert current_rental.car_id == current_car.id
+
+    asyncio.run(scenario())
+
+
 def test_start_rental_keeps_planned_end_date(fleet_service):
     """Scheduling a rental should preserve its planned return date."""
     async def scenario():

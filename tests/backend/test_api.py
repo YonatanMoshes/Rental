@@ -121,6 +121,53 @@ def test_future_rentals_do_not_make_car_rented_now(client):
     assert client.get("/api/cars").json()[0]["status"] == "available"
 
 
+def test_rented_status_filter_returns_only_currently_rented_cars(client):
+    """The rented API filter should exclude future reservations and closed rentals."""
+    today = date.today()
+    current_car = client.post("/api/cars", json={"model": "Current Rental", "year": 2024}).json()
+    future_car = client.post("/api/cars", json={"model": "Future Rental", "year": 2024}).json()
+    closed_car = client.post("/api/cars", json={"model": "Closed Rental", "year": 2024}).json()
+
+    current_rental = client.post(
+        "/api/rentals",
+        json={
+            "car_id": current_car["id"],
+            "customer_name": "Current Customer",
+            "start_date": today.isoformat(),
+            "planned_end_date": (today + timedelta(days=2)).isoformat(),
+        },
+    )
+    future_rental = client.post(
+        "/api/rentals",
+        json={
+            "car_id": future_car["id"],
+            "customer_name": "Future Customer",
+            "start_date": (today + timedelta(days=7)).isoformat(),
+            "planned_end_date": (today + timedelta(days=9)).isoformat(),
+        },
+    )
+    closed_rental = client.post(
+        "/api/rentals",
+        json={
+            "car_id": closed_car["id"],
+            "customer_name": "Closed Customer",
+            "start_date": today.isoformat(),
+            "planned_end_date": (today + timedelta(days=1)).isoformat(),
+        },
+    )
+    close_response = client.post(
+        f"/api/rentals/{closed_rental.json()['id']}/end",
+        params={"end_date": today.isoformat()},
+    )
+
+    rented_cars = client.get("/api/cars", params={"status": "rented"}).json()
+
+    assert current_rental.status_code == 201
+    assert future_rental.status_code == 201
+    assert close_response.status_code == 200
+    assert [car["id"] for car in rented_cars] == [current_car["id"]]
+
+
 def test_rejects_past_rental_dates_over_api(client):
     """The API must reject rental schedules that use dates before today."""
     today = date.today()

@@ -42,10 +42,9 @@ export function CarsTable({
   onDeleteCar,
   onSelectForRental
 }: CarsTableProps) {
-  const visibleCars = statusFilter ? cars.filter((car) => car.status === statusFilter) : cars;
+  const today = todayIsoDate();
 
   function activeRental(carId: string): Rental | undefined {
-    const today = todayIsoDate();
     return rentals.find((rental) => {
       const plannedEndDate = rental.planned_end_date ?? rental.start_date;
       return (
@@ -56,6 +55,15 @@ export function CarsTable({
       );
     });
   }
+
+  function currentStatus(car: Car): VehicleStatus {
+    if (car.status === "maintenance") {
+      return "maintenance";
+    }
+    return activeRental(car.id) ? "rented" : "available";
+  }
+
+  const visibleCars = statusFilter ? cars.filter((car) => currentStatus(car) === statusFilter) : cars;
 
   return (
     <section className="panel table-panel">
@@ -95,6 +103,7 @@ export function CarsTable({
             <tbody>
               {visibleCars.map((car) => {
                 const rental = activeRental(car.id);
+                const status = currentStatus(car);
                 return (
                   <tr key={car.id}>
                     <td data-label="Car">
@@ -102,31 +111,31 @@ export function CarsTable({
                       <span className="muted">ID: {car.id}</span>
                     </td>
                     <td data-label="Status">
-                      <StatusBadge status={car.status} />
+                      <StatusBadge status={status} />
                     </td>
                     <td data-label="Current rental">
                       {rental ? `${rental.customer_name} (${rental.start_date})` : "-"}
                     </td>
                     <td data-label="Actions">
                       <div className="row-actions">
-                        {car.status === "available" && (
+                        {status === "available" && (
                           <button type="button" onClick={() => onSelectForRental(car.id)}>
                             <CheckCircle2 size={17} aria-hidden="true" />
                             Rent
                           </button>
                         )}
-                        {car.status !== "rented" && (
+                        {status !== "rented" && (
                           <button
                             type="button"
                             onClick={() =>
                               onUpdateStatus(
                                 car.id,
-                                car.status === "maintenance" ? "available" : "maintenance"
+                                status === "maintenance" ? "available" : "maintenance"
                               )
                             }
                           >
                             <Wrench size={17} aria-hidden="true" />
-                            {car.status === "maintenance" ? "Available" : "Maintenance"}
+                            {status === "maintenance" ? "Available" : "Maintenance"}
                           </button>
                         )}
                         <button className="danger-button" type="button" onClick={() => onDeleteCar(car.id)}>

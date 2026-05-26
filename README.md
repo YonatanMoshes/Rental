@@ -1085,7 +1085,7 @@ If the queue is working, actions like adding a car or starting a rental create e
 ```
 ## 14. Testing Guide
 
-The backend test suite currently contains 22 passing tests. These tests are important because they prove the main app logic works without needing to manually click through the UI every time. The tests are separated by responsibility in the same way as the backend code: service tests check the logic directly, API tests check the FastAPI routes, repository tests check MongoDB adapter behavior, worker tests check the RabbitMQ event-worker responsibilities, and logging tests check infrastructure behavior such as timestamp formatting.
+The backend test suite currently contains 24 passing tests. These tests are important because they prove the main app logic works without needing to manually click through the UI every time. The tests are separated by responsibility in the same way as the backend code: service tests check the logic directly, API tests check the FastAPI routes, repository tests check MongoDB adapter behavior, worker tests check the RabbitMQ event-worker responsibilities, and logging tests check infrastructure behavior such as timestamp formatting.
 
 To run the full backend test suite, open PowerShell in the project root and run:
 
@@ -1097,8 +1097,8 @@ cd C:\Users\User\OneDrive\Desktop\Rental
 Current passing output looks like this:
 
 ```text
-.....................                                                    [100%]
-22 passed
+........................                                                 [100%]
+24 passed
 ```
 
 Running all tests is the normal command before committing because it proves the backend still works as one system. When you are working on one area, you can run only the related file or even one exact test. This is faster while developing and more professional than clicking randomly through the app.
@@ -1125,6 +1125,7 @@ Run one exact service test:
 | `test_add_and_list_cars` | `tests/backend/test_fleet_service.py` | Proves `FleetService.add_car` creates a car and `FleetService.list_cars` returns it without using a real database. |
 | `test_add_car_publishes_queue_event` | `tests/backend/test_fleet_service.py` | Proves that adding a car publishes a `car.created` event, which is the service-to-queue integration point. |
 | `test_future_rentals_keep_car_available_and_reject_only_overlaps` | `tests/backend/test_fleet_service.py` | Proves a future reservation does not make the car rented today, while overlapping reservations for the same date range are rejected. |
+| `test_rented_filter_returns_only_cars_rented_today` | `tests/backend/test_fleet_service.py` | Proves the service-level rented filter returns only cars that have a rental active today, not future reservations or closed rentals. |
 | `test_rejects_past_rental_dates` | `tests/backend/test_fleet_service.py` | Proves the backend rejects planned start dates and planned return dates that are already in the past. |
 | `test_update_rental_planned_end_date` | `tests/backend/test_fleet_service.py` | Proves an open rental can update its planned return date when the new date is legal. |
 | `test_end_rental_marks_car_available` | `tests/backend/test_fleet_service.py` | Proves ending a current rental closes the rental and returns the car to `available` when no other current rental exists. |
@@ -1151,6 +1152,7 @@ Run one exact API test:
 | `test_car_and_rental_flow_over_api` | `tests/backend/test_api.py` | Proves the real HTTP endpoints can create a car, schedule a rental, update the planned return date, end the rental, and return the car to `available`. |
 | `test_rejects_second_active_rental_for_same_car` | `tests/backend/test_api.py` | Proves the API returns `409 Conflict` when another rental overlaps the same car's date range. |
 | `test_future_rentals_do_not_make_car_rented_now` | `tests/backend/test_api.py` | Proves future reservations can be created without making the car unavailable today. |
+| `test_rented_status_filter_returns_only_currently_rented_cars` | `tests/backend/test_api.py` | Proves `GET /api/cars?status=rented` returns only cars being rented today, excluding future and closed rentals. |
 | `test_operation_statistics_endpoint_is_available` | `tests/backend/test_api.py` | Proves `/api/operation-statistics` returns the timing data used by the Statistics UI. |
 | `test_logs_endpoint_is_available` | `tests/backend/test_api.py` | Proves `/api/logs` returns plain text so the UI's Logs button has a real backend endpoint. |
 

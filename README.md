@@ -1069,7 +1069,7 @@ Internal Docker networking:
 ### Run Everything With Docker
 
 ```powershell
-cd C:\Users\User\OneDrive\Desktop\Rental
+Download the project from Git, open the main folder and type:
 docker compose up --build
 ```
 

@@ -28,6 +28,8 @@ Detailed extra notes are also available in [docs/system-design.md](docs/system-d
 - [11. Docker Architecture](#11-docker-architecture)
 - [12. How To Run](#12-how-to-run)
 - [13. API Usage Examples](#13-api-usage-examples)
+- [14. File And Function Guide](#14-file-and-function-guide)
+- [15. Testing Guide](#15-testing-guide)
 
 ## 1. Full System Overview
 
@@ -1165,7 +1167,7 @@ Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/api/rentals `
   -ContentType "application/json" `
-  -Body '{"car_id":"CAR_ID_HERE","customer_name":"Dana Levi","start_date":"2026-05-25"}'
+  -Body '{"car_id":"CAR_ID_HERE","customer_name":"Dana Levi","start_date":"2026-05-26","planned_end_date":"2026-05-28"}'
 ```
 
 ### End A Rental
@@ -1173,7 +1175,7 @@ Invoke-RestMethod `
 ```powershell
 Invoke-RestMethod `
   -Method Post `
-  -Uri "http://127.0.0.1:8000/api/rentals/RENTAL_ID_HERE/end?end_date=2026-05-25"
+  -Uri "http://127.0.0.1:8000/api/rentals/RENTAL_ID_HERE/end?end_date=2026-05-26"
 ```
 
 ### See Queue Events
@@ -1195,6 +1197,151 @@ If the queue is working, actions like adding a car or starting a rental create e
     "status": "available"
   }
 }
+```
+
+## 14. File And Function Guide
+
+This section is a compact map of the project files. It is meant to help a reader understand where every important responsibility lives without reading every line of code first.
+
+### Backend Files
+
+| File | Main classes / functions | What it does |
+|---|---|---|
+| `backend/app/main.py` | `create_app` | Creates the FastAPI app, connects MongoDB and RabbitMQ during startup, registers routers, and converts expected app errors into clean HTTP responses. |
+| `backend/app/api/dependencies.py` | `get_event_publisher`, `get_fleet_service` | Builds the service layer dependencies for route functions. It connects routes to repositories and the RabbitMQ publisher. |
+| `backend/app/api/routes/cars.py` | `add_car`, `list_cars`, `update_car`, `delete_car` | Defines HTTP endpoints for car management and passes validated data to `FleetService`. |
+| `backend/app/api/routes/rentals.py` | `start_rental`, `list_rentals`, `update_rental`, `end_rental` | Defines rental endpoints for scheduling rentals, editing planned return dates, listing rentals, and ending current rentals. |
+| `backend/app/api/routes/events.py` | `list_events` | Returns the stored queue/audit events that the worker consumed from RabbitMQ. |
+| `backend/app/api/routes/system.py` | `health`, `metrics`, `operation_statistics`, `logs` | Provides health checks, raw Prometheus metrics, UI-friendly operation statistics, and the current log file. |
+| `backend/app/core/config.py` | `AppSettings`, `get_settings` | Loads environment variables such as MongoDB URL, RabbitMQ URL, queue names, and log-file location. |
+| `backend/app/core/errors.py` | `ApplicationError`, `NotFoundError`, `BusinessRuleError` | Defines expected application errors so the API can return readable `404` and `409` responses. |
+| `backend/app/core/logging.py` | `configure_logging` | Sends logs to both the console and the configured log file. |
+| `backend/app/core/metrics.py` | `track_operation`, `refresh_metrics`, `metrics_response`, `operation_statistics_snapshot` | Counts backend operations, measures operation duration, updates fleet gauges, exposes raw metrics, and builds the UI statistics summary. |
+| `backend/app/db/mongodb.py` | `MongoDatabase`, `connect_to_mongodb`, `close_mongodb_connection`, `get_database` | Owns the MongoDB connection lifecycle and gives repositories the active database object. |
+| `backend/app/db/indexes.py` | `ensure_database_indexes` | Creates MongoDB indexes used for faster car, rental, and event queries. |
+| `backend/app/db/object_ids.py` | `parse_object_id` | Safely converts string ids from API routes into MongoDB `ObjectId` values. |
+| `backend/app/messaging/events.py` | `FleetEvent`, `car_event`, `rental_event` | Defines the event shape sent through RabbitMQ and helper functions for car/rental events. |
+| `backend/app/messaging/publisher.py` | `EventPublisher`, `NoOpEventPublisher`, `RabbitMQEventPublisher` | Publishes events to RabbitMQ, while allowing tests to run without a real queue. |
+| `backend/app/messaging/consumer.py` | `RabbitMQEventConsumer` | Reads events from RabbitMQ and hands them to a callback for processing. |
+| `backend/app/workers/event_worker.py` | `run_worker`, `main` | Runs the background worker process that consumes queue events and stores them in MongoDB. |
+| `backend/app/models/documents.py` | `CarDocument`, `RentalDocument` | Defines the internal typed records returned from repositories after reading MongoDB. |
+| `backend/app/models/enums.py` | `VehicleStatus` | Keeps vehicle status values consistent: `available`, `rented`, and `maintenance`. |
+| `backend/app/schemas/cars.py` | `CarCreate`, `CarUpdate`, `CarRead` | Defines the request and response shapes for car API data. |
+| `backend/app/schemas/rentals.py` | `RentalCreate`, `RentalUpdate`, `RentalRead` | Defines the request and response shapes for rental scheduling and rental updates. |
+| `backend/app/schemas/events.py` | `FleetEventRead` | Defines the API response shape for consumed queue events. |
+| `backend/app/repositories/cars.py` | `MongoCarRepository` | Reads, creates, updates, deletes, and counts cars in MongoDB. |
+| `backend/app/repositories/rentals.py` | `MongoRentalRepository` | Stores rental records, finds current rentals, detects date-range conflicts, and closes rentals. |
+| `backend/app/repositories/events.py` | `MongoEventRepository` | Stores consumed RabbitMQ events and lists recent event records for auditing. |
+| `backend/app/services/fleet_service.py` | `FleetService`, `CarRepository`, `RentalRepository` | Contains the main app logic: legal action checks, scheduled rental conflict rules, status updates, metrics refresh, and queue publishing. |
+
+### Frontend Files
+
+| File | Main components / functions | What it does |
+|---|---|---|
+| `frontend/src/main.tsx` | React render setup | Starts the React app and mounts it into the browser page. |
+| `frontend/src/App.tsx` | `App` | Loads the main dashboard component. |
+| `frontend/src/pages/DashboardPage.tsx` | `DashboardPage`, action handlers | Owns dashboard state, loads cars/rentals/statistics, calls API functions, and connects all forms and tables together. |
+| `frontend/src/api/http.ts` | `ApiError`, `request` | Provides one typed fetch wrapper with JSON parsing and consistent error messages. |
+| `frontend/src/api/fleetApi.ts` | `listCars`, `createCar`, `updateCar`, `deleteCar`, `listRentals`, `createRental`, `updateRental`, `endRental`, `getOperationStatistics` | Contains all frontend-to-backend API calls used by React components. |
+| `frontend/src/types/fleet.ts` | TypeScript types | Defines the frontend data contracts for cars, rentals, request payloads, and operation statistics. |
+| `frontend/src/components/AppHeader.tsx` | `AppHeader` | Shows the title, refresh button, logs button, and statistics navigation button. |
+| `frontend/src/components/SummaryTile.tsx` | `SummaryTile` | Displays one dashboard number such as total cars or open rentals. |
+| `frontend/src/components/StatusBadge.tsx` | `StatusBadge` | Shows a styled label for each car status. |
+| `frontend/src/features/cars/CarForm.tsx` | `CarForm` | Lets the user create a new car with model, year, and status. |
+| `frontend/src/features/cars/CarsTable.tsx` | `CarsTable` | Shows all cars, their current status, current rental information, and action buttons. |
+| `frontend/src/features/rentals/RentalForm.tsx` | `RentalForm` | Lets the user schedule a rental with planned start and planned return dates. |
+| `frontend/src/features/rentals/RentalsTable.tsx` | `RentalsTable` | Shows rentals, scheduled/current/closed state, editable planned return dates, and the `End now` action when legal. |
+| `frontend/src/features/observability/OperationStatisticsPanel.tsx` | `OperationStatisticsPanel`, `formatMilliseconds` | Shows average request/operation time per backend operation and the average across all operations together. |
+| `frontend/src/utils/dates.ts` | `todayIsoDate` | Returns today as `YYYY-MM-DD` for HTML date inputs and API payloads. |
+| `frontend/src/utils/labels.ts` | `carDisplayName` | Builds a readable car label from model, year, and status. |
+| `frontend/src/styles/global.css` | CSS rules | Defines the layout, tables, forms, buttons, badges, responsive behavior, and statistics panel styling. |
+
+### Configuration And Docker Files
+
+| File | What it does |
+|---|---|
+| `Dockerfile` | Builds the FastAPI backend and worker image from the Python project. |
+| `docker-compose.yml` | Runs the full system: React frontend, FastAPI API, worker, MongoDB, and RabbitMQ. |
+| `.dockerignore` | Keeps unnecessary files out of Docker build context so builds stay smaller and cleaner. |
+| `.env.example` | Documents environment variables that can configure the backend locally. |
+| `pyproject.toml` | Defines the Python package metadata, dependencies, and pytest configuration. |
+| `frontend/Dockerfile` | Builds the React production assets and serves them with Nginx. |
+| `frontend/nginx.conf` | Serves the React app and proxies `/api`, `/metrics`, and other backend paths to the API container. |
+| `frontend/package.json` | Defines frontend scripts and dependencies such as React, Vite, TypeScript, and lucide icons. |
+| `frontend/package-lock.json` | Locks exact frontend dependency versions for reproducible installs. |
+| `frontend/vite.config.ts` | Configures the Vite dev server and backend API proxy during local frontend development. |
+| `frontend/tsconfig.json` and `frontend/tsconfig.node.json` | Configure TypeScript rules for browser code and Vite/node tooling. |
+| `API.md`, `ARCHITECTURE.md`, `DEVELOPMENT.md`, `DOCUMENTATION.md`, `docs/system-design.md` | Extra documentation files that explain API usage, architecture, development workflow, and system design notes. |
+
+Generated folders such as `.venv`, `node_modules`, `dist`, `.pytest_cache`, and `rental_fleet_manager.egg-info` are not part of the source design. They are created by Python, Node, pytest, or build commands.
+
+### Test Files
+
+| File | Main tests / helpers | What it does |
+|---|---|---|
+| `tests/backend/conftest.py` | `InMemoryCarRepository`, `InMemoryRentalRepository`, `fleet_service`, `client` | Provides test doubles and fixtures so service/API tests can run without a real MongoDB server. |
+| `tests/backend/test_fleet_service.py` | service unit tests | Tests the app logic directly: car creation, queue event publishing, rental scheduling, date conflict prevention, past-date rejection, and status changes. |
+| `tests/backend/test_api.py` | API tests | Tests real FastAPI routes using `TestClient`, including car/rental flow, conflict responses, metrics, logs, and operation statistics. |
+| `tests/backend/test_mongo_repositories.py` | repository unit test | Tests that the car repository correctly awaits MongoDB aggregation and returns status counts. |
+
+## 15. Testing Guide
+
+The project has more than four working tests. At the time of this README update, the backend test suite contains 20 passing tests. These tests are important because they prove the main app logic works without needing to manually click through the UI every time.
+
+Run all backend tests:
+
+```powershell
+cd C:\Users\User\OneDrive\Desktop\Rental
+.\.venv\Scripts\python.exe -m pytest
+```
+
+Current passing output:
+
+```text
+....................                                                     [100%]
+20 passed in 0.97s
+```
+
+### Important Unit Tests
+
+| Test | File | What it proves |
+|---|---|---|
+| `test_add_and_list_cars` | `tests/backend/test_fleet_service.py` | Proves `FleetService.add_car` creates a car and `FleetService.list_cars` returns it. This is a basic unit test for the service layer without using the real database. |
+| `test_add_car_publishes_queue_event` | `tests/backend/test_fleet_service.py` | Proves that when a car is added, the service publishes a `car.created` event. This checks the message-queue integration point without needing RabbitMQ in the unit test. |
+| `test_future_rentals_keep_car_available_and_reject_only_overlaps` | `tests/backend/test_fleet_service.py` | Proves future rentals do not immediately change a car to `rented`, and also proves overlapping rental dates for the same car are rejected. |
+| `test_rejects_past_rental_dates` | `tests/backend/test_fleet_service.py` | Proves the service rejects rental schedules that start in the past or return in the past. This protects the backend even if the UI is bypassed. |
+| `test_update_rental_planned_end_date` | `tests/backend/test_fleet_service.py` | Proves an open rental can have its planned return date edited when the new date is legal. |
+| `test_end_rental_marks_car_available` | `tests/backend/test_fleet_service.py` | Proves ending a current rental closes the rental and returns the car to `available` when no other current rental exists. |
+
+### Important API Tests
+
+| Test | File | What it proves |
+|---|---|---|
+| `test_car_and_rental_flow_over_api` | `tests/backend/test_api.py` | Proves the real FastAPI endpoints can create a car, schedule a rental, update the planned return date, end the rental, and return the car to `available`. |
+| `test_rejects_second_active_rental_for_same_car` | `tests/backend/test_api.py` | Proves the API returns `409 Conflict` when another rental overlaps the same car's date range. |
+| `test_future_rentals_do_not_make_car_rented_now` | `tests/backend/test_api.py` | Proves future reservations can be created without making the car unavailable today. |
+| `test_operation_statistics_endpoint_is_available` | `tests/backend/test_api.py` | Proves `/api/operation-statistics` returns the timing data used by the statistics UI. |
+| `test_logs_endpoint_is_available` | `tests/backend/test_api.py` | Proves `/api/logs` returns plain text so the UI's `Logs` button has a real backend endpoint. |
+
+### Repository Test
+
+| Test | File | What it proves |
+|---|---|---|
+| `test_count_by_status_awaits_async_mongo_aggregate` | `tests/backend/test_mongo_repositories.py` | Proves the Mongo car repository handles async MongoDB aggregation correctly when counting cars by status. |
+
+### Frontend Build Check
+
+Run this to verify the React code compiles:
+
+```powershell
+cd C:\Users\User\OneDrive\Desktop\Rental\frontend
+npm.cmd run build
+```
+
+Expected successful result:
+
+```text
+built successfully
 ```
 
 ## Final Architecture Summary

@@ -1,3 +1,10 @@
+/**
+ * Operation statistics panel.
+ *
+ * Shows the average execution time of every tracked backend operation, plus the
+ * average across all measured operations together.
+ */
+
 import { TimerReset } from "lucide-react";
 
 import type { OperationStatistics } from "../../types/fleet";

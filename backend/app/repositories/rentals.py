@@ -49,9 +49,48 @@ class MongoRentalRepository:
         return rentals
 
     async def active_for_car(self, car_id: str) -> RentalDocument | None:
-        """Get the active (open) rental for a specific car, or None if no active rental."""
+        """Get the open rental that covers today for a specific car."""
+        today = date.today().isoformat()
+        document = await self.collection.find_one(
+            {
+                "car_id": car_id,
+                "end_date": None,
+                "start_date": {"$lte": today},
+                "$or": [{"planned_end_date": {"$gte": today}}, {"planned_end_date": None}],
+            }
+        )
+        return self._to_document(document) if document else None
+
+    async def open_for_car(self, car_id: str) -> RentalDocument | None:
+        """Get any open current or future rental for a specific car."""
         document = await self.collection.find_one({"car_id": car_id, "end_date": None})
         return self._to_document(document) if document else None
+
+    async def overlapping_for_car(
+        self,
+        car_id: str,
+        start_date: date,
+        planned_end_date: date,
+        exclude_rental_id: str | None = None,
+    ) -> RentalDocument | None:
+        """Find an open rental whose planned date range overlaps the requested range."""
+        query: dict[str, Any] = {
+            "car_id": car_id,
+            "end_date": None,
+            "start_date": {"$lte": planned_end_date.isoformat()},
+        }
+        if exclude_rental_id is not None:
+            object_id = parse_object_id(exclude_rental_id)
+            if object_id is not None:
+                query["_id"] = {"$ne": object_id}
+
+        cursor = self.collection.find(query)
+        async for document in cursor:
+            rental = self._to_document(document)
+            existing_end_date = rental.planned_end_date or rental.start_date
+            if rental.start_date <= planned_end_date and existing_end_date >= start_date:
+                return rental
+        return None
 
     async def end(self, rental_id: str, end_date: date) -> RentalDocument | None:
         """Mark a rental as ended by setting the end_date."""

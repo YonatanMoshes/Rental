@@ -13,6 +13,7 @@ import { CheckCircle2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { Car, Rental } from "../../types/fleet";
+import { todayIsoDate } from "../../utils/dates";
 import { carDisplayName } from "../../utils/labels";
 
 type RentalsTableProps = {
@@ -21,7 +22,7 @@ type RentalsTableProps = {
   /** All rentals to display. */
   rentals: Rental[];
   /** Callback when user changes the planned return date. */
-  onUpdatePlannedEnd: (rentalId: string, plannedEndDate: string | null) => Promise<void>;
+  onUpdatePlannedEnd: (rentalId: string, plannedEndDate: string) => Promise<void>;
   /** Callback when user clicks 'End rental' button. */
   onEndRental: (rental: Rental) => Promise<void>;
   /** If true, disables rental action buttons during save. */
@@ -61,8 +62,25 @@ export function RentalsTable({
   }
 
   function handlePlannedEndChange(rental: Rental, value: string) {
+    if (!value) {
+      return;
+    }
     setPlannedEndValue(rental.id, value);
-    void onUpdatePlannedEnd(rental.id, value || null);
+    void onUpdatePlannedEnd(rental.id, value);
+  }
+
+  function rentalCanEndNow(rental: Rental): boolean {
+    return rental.end_date === null && rental.start_date <= todayIsoDate();
+  }
+
+  function openRentalLabel(rental: Rental): string {
+    if (rental.end_date !== null) {
+      return rental.end_date;
+    }
+    if (rental.start_date > todayIsoDate()) {
+      return "Scheduled";
+    }
+    return "Open";
   }
 
   return (
@@ -83,7 +101,7 @@ export function RentalsTable({
               <tr>
                 <th>Car</th>
                 <th>Customer</th>
-                <th>Start</th>
+                <th>Planned start</th>
                 <th>Planned return</th>
                 <th>Actual end</th>
                 <th>Actions</th>
@@ -94,7 +112,7 @@ export function RentalsTable({
                 <tr key={rental.id}>
                   <td data-label="Car">{carName(rental.car_id)}</td>
                   <td data-label="Customer">{rental.customer_name}</td>
-                  <td data-label="Start">{rental.start_date}</td>
+                  <td data-label="Planned start">{rental.start_date}</td>
                   <td data-label="Planned return">
                     {rental.end_date === null ? (
                       <div className="date-action-row">
@@ -111,13 +129,15 @@ export function RentalsTable({
                       rental.planned_end_date ?? "-"
                     )}
                   </td>
-                  <td data-label="Actual end">{rental.end_date ?? "Open"}</td>
+                  <td data-label="Actual end">{openRentalLabel(rental)}</td>
                   <td data-label="Actions">
-                    {rental.end_date === null ? (
+                    {rentalCanEndNow(rental) ? (
                       <button type="button" onClick={() => onEndRental(rental)} disabled={isSaving}>
                         <CheckCircle2 size={17} aria-hidden="true" />
                         End now
                       </button>
+                    ) : rental.end_date === null ? (
+                      <span className="muted">Scheduled</span>
                     ) : (
                       <span className="muted">Closed</span>
                     )}

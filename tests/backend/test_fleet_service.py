@@ -1,4 +1,4 @@
-﻿from datetime import date
+﻿from datetime import date, timedelta
 import asyncio
 
 import pytest
@@ -58,14 +58,62 @@ def test_update_car_status_to_maintenance(fleet_service):
 
 def test_start_rental_marks_car_as_rented(fleet_service):
     async def scenario():
+        today = date.today()
         car = await fleet_service.add_car(CarCreate(model="Toyota Corolla", year=2024))
         rental = await fleet_service.start_rental(
-            RentalCreate(car_id=car.id, customer_name="Dana Levi", start_date=date(2026, 5, 25))
+            RentalCreate(
+                car_id=car.id,
+                customer_name="Dana Levi",
+                start_date=today,
+                planned_end_date=today + timedelta(days=2),
+            )
         )
 
         cars = await fleet_service.list_cars()
         assert rental.end_date is None
         assert cars[0].status == VehicleStatus.RENTED
+
+    asyncio.run(scenario())
+
+
+def test_future_rentals_keep_car_available_and_reject_only_overlaps(fleet_service):
+    async def scenario():
+        today = date.today()
+        car = await fleet_service.add_car(CarCreate(model="Toyota Corolla", year=2024))
+        future_start = today + timedelta(days=30)
+        future_end = future_start + timedelta(days=2)
+        next_week_start = today + timedelta(days=7)
+        next_week_end = next_week_start + timedelta(days=2)
+
+        await fleet_service.start_rental(
+            RentalCreate(
+                car_id=car.id,
+                customer_name="Dana Levi",
+                start_date=future_start,
+                planned_end_date=future_end,
+            )
+        )
+        await fleet_service.start_rental(
+            RentalCreate(
+                car_id=car.id,
+                customer_name="Noa Amir",
+                start_date=next_week_start,
+                planned_end_date=next_week_end,
+            )
+        )
+
+        cars = await fleet_service.list_cars()
+        assert cars[0].status == VehicleStatus.AVAILABLE
+
+        with pytest.raises(BusinessRuleError):
+            await fleet_service.start_rental(
+                RentalCreate(
+                    car_id=car.id,
+                    customer_name="Avi Cohen",
+                    start_date=future_start + timedelta(days=1),
+                    planned_end_date=future_end + timedelta(days=1),
+                )
+            )
 
     asyncio.run(scenario())
 
@@ -138,7 +186,14 @@ def test_cannot_rent_car_in_maintenance(fleet_service):
         )
 
         with pytest.raises(BusinessRuleError):
-            await fleet_service.start_rental(RentalCreate(car_id=car.id, customer_name="Noa Amir"))
+            await fleet_service.start_rental(
+                RentalCreate(
+                    car_id=car.id,
+                    customer_name="Noa Amir",
+                    start_date=date.today(),
+                    planned_end_date=date.today() + timedelta(days=2),
+                )
+            )
 
     asyncio.run(scenario())
 

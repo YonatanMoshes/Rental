@@ -51,6 +51,7 @@ export function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   const availableCars = useMemo(() => cars.filter((car) => car.status === "available"), [cars]);
+  const reservableCars = useMemo(() => cars.filter((car) => car.status !== "maintenance"), [cars]);
   const openRentals = useMemo(() => rentals.filter((rental) => rental.end_date === null), [rentals]);
 
   async function loadDashboard() {
@@ -123,7 +124,7 @@ export function DashboardPage() {
     }, "Rental ended.");
   }
 
-  async function handleUpdateRentalPlan(rentalId: string, plannedEndDate: string | null) {
+  async function handleUpdateRentalPlan(rentalId: string, plannedEndDate: string) {
     await runAction(async () => {
       await updateRental(rentalId, { planned_end_date: plannedEndDate });
     }, "Rental plan updated.");
@@ -154,7 +155,7 @@ export function DashboardPage() {
         <div className="forms-column">
           <CarForm onSubmit={handleCreateCar} isSaving={isSaving} />
           <RentalForm
-            availableCars={availableCars}
+            availableCars={reservableCars}
             selectedCarId={selectedRentalCarId}
             onSelectedCarChange={setSelectedRentalCarId}
             onSubmit={handleCreateRental}

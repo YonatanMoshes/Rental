@@ -2,9 +2,10 @@
  * Rental creation form component.
  * 
  * Allows users to start a new rental by selecting:
- * - An available car from a dropdown
+ * - A car from a dropdown
  * - Customer name
- * - Start date (defaults to today)
+ * - Planned start date (defaults to today)
+ * - Planned return date
  * 
  * Automatically selects the first available car when the form loads.
  */
@@ -71,7 +72,7 @@ export function RentalForm({
       car_id: effectiveSelectedCarId,
       customer_name: customerName.trim(),
       start_date: startDate,
-      planned_end_date: plannedEndDate || null
+      planned_end_date: plannedEndDate
     });
     setCustomerName("");
     setStartDate(todayIsoDate());
@@ -81,11 +82,11 @@ export function RentalForm({
   return (
     <form className="panel form-panel" onSubmit={handleSubmit}>
       <div className="panel-heading">
-        <h2>Start Rental</h2>
+        <h2>Schedule Rental</h2>
       </div>
 
       <label>
-        Available car
+        Car
         <select
           value={effectiveSelectedCarId}
           onChange={(event) => onSelectedCarChange(event.target.value)}
@@ -93,7 +94,7 @@ export function RentalForm({
           required
         >
           {availableCars.length === 0 ? (
-            <option value="">No available cars</option>
+            <option value="">No cars available for scheduling</option>
           ) : (
             availableCars.map((car) => (
               <option key={car.id} value={car.id}>
@@ -115,7 +116,7 @@ export function RentalForm({
       </label>
 
       <label>
-        Start date
+        Planned start date
         <input
           type="date"
           value={startDate}
@@ -131,12 +132,13 @@ export function RentalForm({
           value={plannedEndDate}
           min={startDate}
           onChange={(event) => setPlannedEndDate(event.target.value)}
+          required
         />
       </label>
 
       <button className="primary-button" type="submit" disabled={isSaving || !effectiveSelectedCarId}>
         <ClipboardPlus size={18} aria-hidden="true" />
-        Start rental
+        Schedule rental
       </button>
     </form>
   );

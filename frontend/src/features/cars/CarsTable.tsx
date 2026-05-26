@@ -13,6 +13,7 @@ import { CheckCircle2, Trash2, Wrench } from "lucide-react";
 
 import { StatusBadge } from "../../components/StatusBadge";
 import type { Car, Rental, VehicleStatus } from "../../types/fleet";
+import { todayIsoDate } from "../../utils/dates";
 import { carDisplayName } from "../../utils/labels";
 
 type CarsTableProps = {
@@ -44,7 +45,16 @@ export function CarsTable({
   const visibleCars = statusFilter ? cars.filter((car) => car.status === statusFilter) : cars;
 
   function activeRental(carId: string): Rental | undefined {
-    return rentals.find((rental) => rental.car_id === carId && rental.end_date === null);
+    const today = todayIsoDate();
+    return rentals.find((rental) => {
+      const plannedEndDate = rental.planned_end_date ?? rental.start_date;
+      return (
+        rental.car_id === carId
+        && rental.end_date === null
+        && rental.start_date <= today
+        && plannedEndDate >= today
+      );
+    });
   }
 
   return (

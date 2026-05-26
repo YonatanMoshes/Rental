@@ -53,6 +53,18 @@ class RentalRepository(Protocol):
     async def active_for_car(self, car_id: str) -> RentalDocument | None:
         pass
 
+    async def open_for_car(self, car_id: str) -> RentalDocument | None:
+        pass
+
+    async def overlapping_for_car(
+        self,
+        car_id: str,
+        start_date: date,
+        planned_end_date: date,
+        exclude_rental_id: str | None = None,
+    ) -> RentalDocument | None:
+        pass
+
     async def end(self, rental_id: str, end_date: date) -> RentalDocument | None:
         pass
 
@@ -88,7 +100,9 @@ class FleetService:
     @track_operation("list_cars")
     async def list_cars(self, status: VehicleStatus | None = None) -> list[CarDocument]:
         """List cars, optionally filtered by status."""
-        cars = await self.cars.list(status=status)
+        cars = [await self._with_current_schedule_status(car) for car in await self.cars.list()]
+        if status is not None:
+            cars = [car for car in cars if car.status == status]
         logger.info("Listed cars count=%s status=%s", len(cars), status)
         return cars
 
@@ -125,8 +139,8 @@ class FleetService:
         Cannot delete a car that has an active rental.
         """
         car = await self._require_car(car_id)
-        if await self.rentals.active_for_car(car.id):
-            raise BusinessRuleError("Cannot delete a car with an active rental.")
+        if await self.rentals.open_for_car(car.id):
+            raise BusinessRuleError("Cannot delete a car with an open or scheduled rental.")
 
         deleted = await self.cars.delete(car.id)
         if not deleted:
@@ -139,15 +153,16 @@ class FleetService:
     @track_operation("start_rental")
     async def start_rental(self, data: RentalCreate) -> RentalDocument:
         car = await self._require_car(data.car_id)
-        if car.status != VehicleStatus.AVAILABLE:
-            raise BusinessRuleError("Only available cars can be rented.")
-        if await self.rentals.active_for_car(car.id):
-            raise BusinessRuleError("This car already has an active rental.")
-        if data.planned_end_date is not None and data.planned_end_date < data.start_date:
+        if car.status == VehicleStatus.MAINTENANCE:
+            raise BusinessRuleError("Cars in maintenance cannot be reserved.")
+        if data.planned_end_date < data.start_date:
             raise BusinessRuleError("Planned end date cannot be before the rental start date.")
+        if await self.rentals.overlapping_for_car(car.id, data.start_date, data.planned_end_date):
+            raise BusinessRuleError("This car already has a rental during this date range.")
 
         rental = await self.rentals.create(data)
-        await self.cars.update(car.id, CarUpdate(status=VehicleStatus.RENTED))
+        if self._rental_covers_date(rental, date.today()):
+            await self.cars.update(car.id, CarUpdate(status=VehicleStatus.RENTED))
 
         logger.info(
             "Started rental id=%s car_id=%s customer=%s",
@@ -172,8 +187,15 @@ class FleetService:
             raise NotFoundError(f"Rental {rental_id} was not found.")
         if rental.end_date is not None:
             raise BusinessRuleError("Cannot edit the planned end date of a closed rental.")
-        if data.planned_end_date is not None and data.planned_end_date < rental.start_date:
+        if data.planned_end_date < rental.start_date:
             raise BusinessRuleError("Planned end date cannot be before the rental start date.")
+        if await self.rentals.overlapping_for_car(
+            rental.car_id,
+            rental.start_date,
+            data.planned_end_date,
+            exclude_rental_id=rental.id,
+        ):
+            raise BusinessRuleError("This car already has a rental during this date range.")
 
         updated = await self.rentals.update(rental.id, data)
         if updated is None:
@@ -199,7 +221,9 @@ class FleetService:
         if closed_rental is None:
             raise NotFoundError(f"Rental {rental_id} was not found.")
 
-        await self.cars.update(rental.car_id, CarUpdate(status=VehicleStatus.AVAILABLE))
+        active_rental = await self.rentals.active_for_car(rental.car_id)
+        if active_rental is None:
+            await self.cars.update(rental.car_id, CarUpdate(status=VehicleStatus.AVAILABLE))
         logger.info("Ended rental id=%s car_id=%s", rental.id, rental.car_id)
         await refresh_metrics(self.cars, self.rentals)
         await self._publish_event(rental_event("rental.ended", closed_rental))
@@ -210,6 +234,18 @@ class FleetService:
         if car is None:
             raise NotFoundError(f"Car {car_id} was not found.")
         return car
+
+    async def _with_current_schedule_status(self, car: CarDocument) -> CarDocument:
+        if car.status == VehicleStatus.MAINTENANCE:
+            return car
+        if await self.rentals.active_for_car(car.id):
+            return car.model_copy(update={"status": VehicleStatus.RENTED})
+        return car.model_copy(update={"status": VehicleStatus.AVAILABLE})
+
+    @staticmethod
+    def _rental_covers_date(rental: RentalDocument, check_date: date) -> bool:
+        planned_end_date = rental.planned_end_date or rental.start_date
+        return rental.end_date is None and rental.start_date <= check_date <= planned_end_date
 
     async def _publish_event(self, event: FleetEvent) -> None:
         try:

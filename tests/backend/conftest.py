@@ -1,4 +1,5 @@
 ﻿from collections.abc import Generator
+from datetime import date
 from itertools import count
 
 import pytest
@@ -74,8 +75,39 @@ class InMemoryRentalRepository:
         return rentals
 
     async def active_for_car(self, car_id: str) -> RentalDocument | None:
+        today = date.today()
+        for rental in self._rentals.values():
+            planned_end_date = rental.planned_end_date or rental.start_date
+            if (
+                rental.car_id == car_id
+                and rental.end_date is None
+                and rental.start_date <= today <= planned_end_date
+            ):
+                return rental
+        return None
+
+    async def open_for_car(self, car_id: str) -> RentalDocument | None:
         for rental in self._rentals.values():
             if rental.car_id == car_id and rental.end_date is None:
+                return rental
+        return None
+
+    async def overlapping_for_car(
+        self,
+        car_id: str,
+        start_date: date,
+        planned_end_date: date,
+        exclude_rental_id: str | None = None,
+    ) -> RentalDocument | None:
+        for rental in self._rentals.values():
+            existing_end_date = rental.planned_end_date or rental.start_date
+            if (
+                rental.id != exclude_rental_id
+                and rental.car_id == car_id
+                and rental.end_date is None
+                and rental.start_date <= planned_end_date
+                and existing_end_date >= start_date
+            ):
                 return rental
         return None
 

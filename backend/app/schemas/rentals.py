@@ -14,12 +14,12 @@ class RentalCreate(BaseModel):
     car_id: str
     customer_name: str = Field(min_length=1, max_length=120)
     start_date: date = Field(default_factory=date.today)
-    planned_end_date: date | None = None
+    planned_end_date: date
 
 
 class RentalUpdate(BaseModel):
     """Request body for editing an open rental."""
-    planned_end_date: date | None = None
+    planned_end_date: date
 
 
 class RentalRead(BaseModel):

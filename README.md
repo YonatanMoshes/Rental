@@ -965,7 +965,6 @@ React app: http://127.0.0.1:5173
 API docs: http://127.0.0.1:8000/docs
 Metrics: http://127.0.0.1:8000/metrics
 Queue events: http://127.0.0.1:8000/api/events?limit=5
-RabbitMQ dashboard: http://127.0.0.1:15672
 ```
 
 RabbitMQ login:

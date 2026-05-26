@@ -17,6 +17,7 @@ class EventPublisher(Protocol):
     """Interface used by the service layer to publish business events."""
 
     async def publish(self, event: FleetEvent) -> None:
+        """Publish one event to whatever queue implementation is configured."""
         pass
 
 
@@ -24,6 +25,7 @@ class NoOpEventPublisher:
     """Publisher used by tests and local runs that do not need RabbitMQ."""
 
     async def publish(self, event: FleetEvent) -> None:
+        """Accept an event without sending it, keeping tests simple and fast."""
         logger.debug("Skipped event publish event_type=%s", event.event_type)
 
 
@@ -31,6 +33,7 @@ class RabbitMQEventPublisher:
     """Publishes fleet events to RabbitMQ."""
 
     def __init__(self, settings: AppSettings):
+        """Keep RabbitMQ settings and lazy connection state for the API process."""
         self.settings = settings
         self.connection: aio_pika.RobustConnection | None = None
         self.channel: aio_pika.abc.AbstractChannel | None = None
@@ -69,6 +72,7 @@ class RabbitMQEventPublisher:
         raise RuntimeError("Could not connect to RabbitMQ.")
 
     async def publish(self, event: FleetEvent) -> None:
+        """Send one persistent fleet event message to RabbitMQ."""
         if self.exchange is None:
             await self.connect()
 
@@ -78,12 +82,13 @@ class RabbitMQEventPublisher:
             delivery_mode=DeliveryMode.PERSISTENT,
         )
         await self.exchange.publish(message, routing_key=self.settings.event_routing_key)
-        logger.info(
+        logger.debug(
             "Published event event_type=%s aggregate_id=%s",
             event.event_type,
             event.aggregate_id,
         )
 
     async def close(self) -> None:
+        """Close the RabbitMQ connection during application shutdown."""
         if self.connection is not None:
             await self.connection.close()

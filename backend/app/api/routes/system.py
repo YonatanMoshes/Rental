@@ -9,11 +9,16 @@ Provides:
 
 from pathlib import Path
 
-from fastapi import APIRouter, Response
+from typing import Any
+
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import PlainTextResponse
 
 from backend.app.core.config import get_settings
-from backend.app.core.metrics import metrics_response, operation_statistics_snapshot
+from backend.app.core.metrics import metrics_response, operation_statistics_snapshot, refresh_metrics
+from backend.app.db.mongodb import get_database
+from backend.app.repositories.cars import MongoCarRepository
+from backend.app.repositories.rentals import MongoRentalRepository
 
 router = APIRouter(tags=["system"])
 
@@ -25,8 +30,9 @@ async def health() -> dict[str, str]:
 
 
 @router.get("/metrics", include_in_schema=False)
-async def metrics() -> Response:
-    """Prometheus metrics endpoint. Not included in OpenAPI schema."""
+async def metrics(database: Any = Depends(get_database)) -> Response:
+    """Refresh fleet gauges on demand and return Prometheus metrics."""
+    await refresh_metrics(MongoCarRepository(database), MongoRentalRepository(database))
     return metrics_response()
 
 

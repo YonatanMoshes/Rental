@@ -35,6 +35,8 @@ OPEN_RENTALS = Gauge("rental_fleet_open_rentals", "Rentals without an end date."
 
 @dataclass
 class OperationTiming:
+    """In-memory timing totals used by the dashboard statistics panel."""
+
     count: int = 0
     total_seconds: float = 0.0
     last_seconds: float = 0.0
@@ -47,6 +49,7 @@ _operation_timings_lock = Lock()
 
 
 def _record_operation_timing(operation: str, duration_seconds: float) -> None:
+    """Store one measured operation duration for the UI statistics endpoint."""
     with _operation_timings_lock:
         timing = _operation_timings.setdefault(operation, OperationTiming())
         timing.count += 1
@@ -67,8 +70,11 @@ def _record_operation_timing(operation: str, duration_seconds: float) -> None:
 def track_operation(operation: str) -> Callable[[F], F]:
     """Decorator to track operation count and duration metrics."""
     def decorator(function: F) -> F:
+        """Wrap one async service function with timing and count collection."""
+
         @wraps(function)
         async def wrapped(*args: Any, **kwargs: Any) -> Any:
+            """Execute the service function and record its elapsed time."""
             start = perf_counter()
             try:
                 return await function(*args, **kwargs)

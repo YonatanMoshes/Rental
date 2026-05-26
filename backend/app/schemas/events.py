@@ -7,6 +7,8 @@ from pydantic import BaseModel
 
 
 class FleetEventRead(BaseModel):
+    """API response model for events already consumed from RabbitMQ."""
+
     event_id: str
     event_type: str
     aggregate_type: str

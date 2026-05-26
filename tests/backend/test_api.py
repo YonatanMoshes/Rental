@@ -1,7 +1,15 @@
-﻿from datetime import date, timedelta
+﻿"""API-level tests for the FastAPI routes.
+
+These tests call the application through HTTP using TestClient. They prove that
+routes, schemas, dependency injection, service logic, and error handling work
+together as one backend API.
+"""
+
+from datetime import date, timedelta
 
 
 def test_car_and_rental_flow_over_api(client):
+    """Create a car, schedule a rental, edit it, close it, and verify status."""
     today = date.today()
     planned_end = today + timedelta(days=2)
     car_response = client.post("/api/cars", json={"model": "Toyota Corolla", "year": 2024})
@@ -44,6 +52,7 @@ def test_car_and_rental_flow_over_api(client):
 
 
 def test_rejects_second_active_rental_for_same_car(client):
+    """Overlapping rentals for the same car must return 409 Conflict."""
     today = date.today()
     car_id = client.post("/api/cars", json={"model": "Mazda 3", "year": 2023}).json()["id"]
     first = client.post(
@@ -70,6 +79,7 @@ def test_rejects_second_active_rental_for_same_car(client):
 
 
 def test_future_rentals_do_not_make_car_rented_now(client):
+    """Future rentals should reserve dates without making the car rented today."""
     today = date.today()
     future_start = today + timedelta(days=30)
     future_end = future_start + timedelta(days=2)
@@ -112,6 +122,7 @@ def test_future_rentals_do_not_make_car_rented_now(client):
 
 
 def test_rejects_past_rental_dates_over_api(client):
+    """The API must reject rental schedules that use dates before today."""
     today = date.today()
     car_id = client.post("/api/cars", json={"model": "Kia Picanto", "year": 2024}).json()["id"]
 
@@ -139,6 +150,7 @@ def test_rejects_past_rental_dates_over_api(client):
 
 
 def test_metrics_endpoint_is_available(client):
+    """The Prometheus metrics endpoint should be reachable by monitoring tools."""
     response = client.get("/metrics")
 
     assert response.status_code == 200
@@ -146,6 +158,7 @@ def test_metrics_endpoint_is_available(client):
 
 
 def test_operation_statistics_endpoint_is_available(client):
+    """The UI statistics endpoint should expose measured operation timings."""
     client.get("/api/cars")
 
     response = client.get("/api/operation-statistics")
@@ -159,6 +172,7 @@ def test_operation_statistics_endpoint_is_available(client):
 
 
 def test_logs_endpoint_is_available(client):
+    """The UI Logs button needs a plain-text log endpoint to open."""
     response = client.get("/api/logs")
 
     assert response.status_code == 200

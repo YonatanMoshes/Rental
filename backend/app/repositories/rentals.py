@@ -123,6 +123,7 @@ class MongoRentalRepository:
 
     @staticmethod
     def _to_document(document: dict[str, Any]) -> RentalDocument:
+        """Convert a raw MongoDB document into the clean API/domain model."""
         return RentalDocument(
             id=str(document["_id"]),
             car_id=document["car_id"],

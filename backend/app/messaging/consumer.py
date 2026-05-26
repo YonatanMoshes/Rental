@@ -19,12 +19,14 @@ class RabbitMQEventConsumer:
     """Consumes fleet events from RabbitMQ and passes them to a handler."""
 
     def __init__(self, settings: AppSettings, handler: EventHandler):
+        """Store queue settings and the async handler used for each message."""
         self.settings = settings
         self.handler = handler
         self.connection: aio_pika.RobustConnection | None = None
         self.channel: aio_pika.abc.AbstractChannel | None = None
 
     async def start(self, attempts: int = 10, delay_seconds: float = 1.0) -> None:
+        """Connect to RabbitMQ, bind the queue, and start consuming messages."""
         for attempt in range(1, attempts + 1):
             try:
                 self.connection = await aio_pika.connect_robust(self.settings.rabbitmq_url)
@@ -58,6 +60,7 @@ class RabbitMQEventConsumer:
         logger.info("Consuming RabbitMQ queue=%s", self.settings.event_queue_name)
 
     async def _handle_message(self, message: IncomingMessage) -> None:
+        """Validate one queue message, run the handler, and acknowledge on success."""
         async with message.process(requeue=True):
             event = FleetEvent.model_validate_json(message.body)
             await self.handler(event)
@@ -68,5 +71,6 @@ class RabbitMQEventConsumer:
             )
 
     async def close(self) -> None:
+        """Close the consumer connection when the worker process stops."""
         if self.connection is not None:
             await self.connection.close()

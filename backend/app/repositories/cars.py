@@ -77,6 +77,7 @@ class MongoCarRepository:
 
     @staticmethod
     def _to_document(document: dict[str, Any]) -> CarDocument:
+        """Convert a raw MongoDB document into the clean API/domain model."""
         return CarDocument(
             id=str(document["_id"]),
             model=document["model"],

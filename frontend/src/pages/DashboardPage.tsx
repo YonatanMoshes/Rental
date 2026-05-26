@@ -117,7 +117,9 @@ export function DashboardPage() {
 
   async function handleEndRental(rental: Rental) {
     await runAction(async () => {
-      await endRental(rental.id, todayIsoDate());
+      const today = todayIsoDate();
+      const safeEndDate = rental.start_date > today ? rental.start_date : today;
+      await endRental(rental.id, safeEndDate);
     }, "Rental ended.");
   }
 

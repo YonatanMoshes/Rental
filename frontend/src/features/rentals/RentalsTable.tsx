@@ -9,7 +9,7 @@
  * - Action button to end active rentals
  */
 
-import { CheckCircle2, Save } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { Car, Rental } from "../../types/fleet";
@@ -20,7 +20,7 @@ type RentalsTableProps = {
   cars: Car[];
   /** All rentals to display. */
   rentals: Rental[];
-  /** Callback when user saves a changed planned return date. */
+  /** Callback when user changes the planned return date. */
   onUpdatePlannedEnd: (rentalId: string, plannedEndDate: string | null) => Promise<void>;
   /** Callback when user clicks 'End rental' button. */
   onEndRental: (rental: Rental) => Promise<void>;
@@ -58,6 +58,11 @@ export function RentalsTable({
 
   function setPlannedEndValue(rentalId: string, value: string) {
     setDraftPlannedEnds((current) => ({ ...current, [rentalId]: value }));
+  }
+
+  function handlePlannedEndChange(rental: Rental, value: string) {
+    setPlannedEndValue(rental.id, value);
+    void onUpdatePlannedEnd(rental.id, value || null);
   }
 
   return (
@@ -98,16 +103,9 @@ export function RentalsTable({
                           type="date"
                           value={plannedEndValue(rental)}
                           min={rental.start_date}
-                          onChange={(event) => setPlannedEndValue(rental.id, event.target.value)}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => onUpdatePlannedEnd(rental.id, plannedEndValue(rental) || null)}
+                          onChange={(event) => handlePlannedEndChange(rental, event.target.value)}
                           disabled={isSaving}
-                        >
-                          <Save size={16} aria-hidden="true" />
-                          Save plan
-                        </button>
+                        />
                       </div>
                     ) : (
                       rental.planned_end_date ?? "-"

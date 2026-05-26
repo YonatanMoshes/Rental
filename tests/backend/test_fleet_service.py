@@ -120,17 +120,19 @@ def test_future_rentals_keep_car_available_and_reject_only_overlaps(fleet_servic
 
 def test_start_rental_keeps_planned_end_date(fleet_service):
     async def scenario():
+        today = date.today()
+        planned_end = today + timedelta(days=3)
         car = await fleet_service.add_car(CarCreate(model="Toyota Corolla", year=2024))
         rental = await fleet_service.start_rental(
             RentalCreate(
                 car_id=car.id,
                 customer_name="Dana Levi",
-                start_date=date(2026, 5, 25),
-                planned_end_date=date(2026, 5, 28),
+                start_date=today,
+                planned_end_date=planned_end,
             )
         )
 
-        assert rental.planned_end_date == date(2026, 5, 28)
+        assert rental.planned_end_date == planned_end
         assert rental.end_date is None
 
     asyncio.run(scenario())
@@ -138,42 +140,97 @@ def test_start_rental_keeps_planned_end_date(fleet_service):
 
 def test_update_rental_planned_end_date(fleet_service):
     async def scenario():
+        today = date.today()
+        planned_end = today + timedelta(days=3)
+        extended_end = today + timedelta(days=4)
         car = await fleet_service.add_car(CarCreate(model="Kia Niro", year=2024))
         rental = await fleet_service.start_rental(
             RentalCreate(
                 car_id=car.id,
                 customer_name="Noa Amir",
-                start_date=date(2026, 5, 25),
-                planned_end_date=date(2026, 5, 28),
+                start_date=today,
+                planned_end_date=planned_end,
             )
         )
 
         updated = await fleet_service.update_rental_plan(
             rental.id,
-            RentalUpdate(planned_end_date=date(2026, 5, 29)),
+            RentalUpdate(planned_end_date=extended_end),
         )
 
-        assert updated.planned_end_date == date(2026, 5, 29)
+        assert updated.planned_end_date == extended_end
+
+    asyncio.run(scenario())
+
+
+def test_rejects_past_rental_dates(fleet_service):
+    async def scenario():
+        today = date.today()
+        car = await fleet_service.add_car(CarCreate(model="Hyundai i20", year=2022))
+
+        with pytest.raises(BusinessRuleError):
+            await fleet_service.start_rental(
+                RentalCreate(
+                    car_id=car.id,
+                    customer_name="Past Start",
+                    start_date=today - timedelta(days=1),
+                    planned_end_date=today + timedelta(days=1),
+                )
+            )
+
+        with pytest.raises(BusinessRuleError):
+            await fleet_service.start_rental(
+                RentalCreate(
+                    car_id=car.id,
+                    customer_name="Past Return",
+                    start_date=today,
+                    planned_end_date=today - timedelta(days=1),
+                )
+            )
+
+    asyncio.run(scenario())
+
+
+def test_rejects_past_rental_plan_update(fleet_service):
+    async def scenario():
+        today = date.today()
+        car = await fleet_service.add_car(CarCreate(model="Mazda 2", year=2023))
+        rental = await fleet_service.start_rental(
+            RentalCreate(
+                car_id=car.id,
+                customer_name="Dana Levi",
+                start_date=today,
+                planned_end_date=today + timedelta(days=2),
+            )
+        )
+
+        with pytest.raises(BusinessRuleError):
+            await fleet_service.update_rental_plan(
+                rental.id,
+                RentalUpdate(planned_end_date=today - timedelta(days=1)),
+            )
 
     asyncio.run(scenario())
 
 
 def test_end_rental_marks_car_available(fleet_service):
     async def scenario():
+        today = date.today()
+        planned_end = today + timedelta(days=5)
         car = await fleet_service.add_car(CarCreate(model="Mazda 3", year=2023))
         rental = await fleet_service.start_rental(
             RentalCreate(
                 car_id=car.id,
                 customer_name="Avi Cohen",
-                start_date=date(2026, 5, 25),
-                planned_end_date=date(2026, 5, 30),
+                start_date=today,
+                planned_end_date=planned_end,
             )
         )
-        closed = await fleet_service.end_rental(rental.id, end_date=date(2026, 5, 26))
+        closed = await fleet_service.end_rental(rental.id, end_date=today)
 
         cars = await fleet_service.list_cars()
-        assert closed.end_date == date(2026, 5, 26)
-        assert closed.planned_end_date == date(2026, 5, 30)
+        assert closed.end_date == today
+        assert closed.planned_end_date == planned_end
         assert cars[0].status == VehicleStatus.AVAILABLE
 
     asyncio.run(scenario())

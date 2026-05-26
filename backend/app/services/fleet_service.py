@@ -152,16 +152,21 @@ class FleetService:
 
     @track_operation("start_rental")
     async def start_rental(self, data: RentalCreate) -> RentalDocument:
+        today = date.today()
         car = await self._require_car(data.car_id)
         if car.status == VehicleStatus.MAINTENANCE:
             raise BusinessRuleError("Cars in maintenance cannot be reserved.")
+        if data.start_date < today:
+            raise BusinessRuleError("Planned start date cannot be in the past.")
         if data.planned_end_date < data.start_date:
             raise BusinessRuleError("Planned end date cannot be before the rental start date.")
+        if data.planned_end_date < today:
+            raise BusinessRuleError("Planned return date cannot be in the past.")
         if await self.rentals.overlapping_for_car(car.id, data.start_date, data.planned_end_date):
             raise BusinessRuleError("This car already has a rental during this date range.")
 
         rental = await self.rentals.create(data)
-        if self._rental_covers_date(rental, date.today()):
+        if self._rental_covers_date(rental, today):
             await self.cars.update(car.id, CarUpdate(status=VehicleStatus.RENTED))
 
         logger.info(
@@ -189,6 +194,8 @@ class FleetService:
             raise BusinessRuleError("Cannot edit the planned end date of a closed rental.")
         if data.planned_end_date < rental.start_date:
             raise BusinessRuleError("Planned end date cannot be before the rental start date.")
+        if data.planned_end_date < date.today():
+            raise BusinessRuleError("Planned return date cannot be in the past.")
         if await self.rentals.overlapping_for_car(
             rental.car_id,
             rental.start_date,
@@ -214,6 +221,8 @@ class FleetService:
             raise BusinessRuleError("Rental is already closed.")
 
         closed_on = end_date or date.today()
+        if closed_on < date.today():
+            raise BusinessRuleError("End date cannot be in the past.")
         if closed_on < rental.start_date:
             raise BusinessRuleError("End date cannot be before the rental start date.")
 

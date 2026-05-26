@@ -69,6 +69,11 @@ export function RentalsTable({
     void onUpdatePlannedEnd(rental.id, value);
   }
 
+  function plannedEndMinDate(rental: Rental): string {
+    const today = todayIsoDate();
+    return rental.start_date > today ? rental.start_date : today;
+  }
+
   function rentalCanEndNow(rental: Rental): boolean {
     return rental.end_date === null && rental.start_date <= todayIsoDate();
   }
@@ -120,7 +125,7 @@ export function RentalsTable({
                           aria-label={`Planned return date for ${rental.customer_name}`}
                           type="date"
                           value={plannedEndValue(rental)}
-                          min={rental.start_date}
+                          min={plannedEndMinDate(rental)}
                           onChange={(event) => handlePlannedEndChange(rental, event.target.value)}
                           disabled={isSaving}
                         />

@@ -111,6 +111,33 @@ def test_future_rentals_do_not_make_car_rented_now(client):
     assert client.get("/api/cars").json()[0]["status"] == "available"
 
 
+def test_rejects_past_rental_dates_over_api(client):
+    today = date.today()
+    car_id = client.post("/api/cars", json={"model": "Kia Picanto", "year": 2024}).json()["id"]
+
+    past_start = client.post(
+        "/api/rentals",
+        json={
+            "car_id": car_id,
+            "customer_name": "Past Start",
+            "start_date": (today - timedelta(days=1)).isoformat(),
+            "planned_end_date": (today + timedelta(days=1)).isoformat(),
+        },
+    )
+    past_return = client.post(
+        "/api/rentals",
+        json={
+            "car_id": car_id,
+            "customer_name": "Past Return",
+            "start_date": today.isoformat(),
+            "planned_end_date": (today - timedelta(days=1)).isoformat(),
+        },
+    )
+
+    assert past_start.status_code == 409
+    assert past_return.status_code == 409
+
+
 def test_metrics_endpoint_is_available(client):
     response = client.get("/metrics")
 

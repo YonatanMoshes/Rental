@@ -40,6 +40,8 @@ export function RentalForm({
   const [customerName, setCustomerName] = useState("");
   const [startDate, setStartDate] = useState(todayIsoDate());
   const [plannedEndDate, setPlannedEndDate] = useState(todayIsoDate());
+  const today = todayIsoDate();
+  const plannedEndMinDate = startDate > today ? startDate : today;
   const selectedCarIsAvailable = availableCars.some((car) => car.id === selectedCarId);
   const effectiveSelectedCarId = selectedCarIsAvailable ? selectedCarId : availableCars[0]?.id ?? "";
 
@@ -57,10 +59,16 @@ export function RentalForm({
   }, [availableCars, onSelectedCarChange, selectedCarId]);
 
   useEffect(() => {
-    if (plannedEndDate && plannedEndDate < startDate) {
-      setPlannedEndDate(startDate);
+    if (startDate < today) {
+      setStartDate(today);
     }
-  }, [plannedEndDate, startDate]);
+  }, [startDate, today]);
+
+  useEffect(() => {
+    if (plannedEndDate && plannedEndDate < plannedEndMinDate) {
+      setPlannedEndDate(plannedEndMinDate);
+    }
+  }, [plannedEndDate, plannedEndMinDate]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -120,6 +128,7 @@ export function RentalForm({
         <input
           type="date"
           value={startDate}
+          min={today}
           onChange={(event) => setStartDate(event.target.value)}
           required
         />
@@ -130,7 +139,7 @@ export function RentalForm({
         <input
           type="date"
           value={plannedEndDate}
-          min={startDate}
+          min={plannedEndMinDate}
           onChange={(event) => setPlannedEndDate(event.target.value)}
           required
         />

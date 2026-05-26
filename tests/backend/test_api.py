@@ -143,3 +143,23 @@ def test_metrics_endpoint_is_available(client):
 
     assert response.status_code == 200
     assert "rental_fleet_available_cars" in response.text
+
+
+def test_operation_statistics_endpoint_is_available(client):
+    client.get("/api/cars")
+
+    response = client.get("/api/operation-statistics")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert "operations" in body
+    assert "average_ms" in body
+    assert body["total_count"] >= 1
+    assert any(operation["operation"] == "list_cars" for operation in body["operations"])
+
+
+def test_logs_endpoint_is_available(client):
+    response = client.get("/api/logs")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")

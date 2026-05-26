@@ -10,6 +10,7 @@ import type {
   Car,
   CarCreatePayload,
   CarUpdatePayload,
+  OperationStatistics,
   Rental,
   RentalCreatePayload,
   RentalUpdatePayload,
@@ -88,4 +89,11 @@ export function endRental(rentalId: string, endDate: string): Promise<Rental> {
   return request<Rental>(`/api/rentals/${rentalId}/end?end_date=${endDate}`, {
     method: "POST"
   });
+}
+
+/**
+ * Get average timing statistics for backend operations.
+ */
+export function getOperationStatistics(): Promise<OperationStatistics> {
+  return request<OperationStatistics>("/api/operation-statistics");
 }

@@ -5,7 +5,9 @@ Metrics are exposed at /metrics endpoint in Prometheus format.
 """
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from functools import wraps
+from threading import Lock
 from time import perf_counter
 from typing import Any, TypeVar
 
@@ -31,6 +33,37 @@ RENTED_CARS = Gauge("rental_fleet_rented_cars", "Cars currently rented.")
 OPEN_RENTALS = Gauge("rental_fleet_open_rentals", "Rentals without an end date.")
 
 
+@dataclass
+class OperationTiming:
+    count: int = 0
+    total_seconds: float = 0.0
+    last_seconds: float = 0.0
+    min_seconds: float | None = None
+    max_seconds: float | None = None
+
+
+_operation_timings: dict[str, OperationTiming] = {}
+_operation_timings_lock = Lock()
+
+
+def _record_operation_timing(operation: str, duration_seconds: float) -> None:
+    with _operation_timings_lock:
+        timing = _operation_timings.setdefault(operation, OperationTiming())
+        timing.count += 1
+        timing.total_seconds += duration_seconds
+        timing.last_seconds = duration_seconds
+        timing.min_seconds = (
+            duration_seconds
+            if timing.min_seconds is None
+            else min(timing.min_seconds, duration_seconds)
+        )
+        timing.max_seconds = (
+            duration_seconds
+            if timing.max_seconds is None
+            else max(timing.max_seconds, duration_seconds)
+        )
+
+
 def track_operation(operation: str) -> Callable[[F], F]:
     """Decorator to track operation count and duration metrics."""
     def decorator(function: F) -> F:
@@ -40,10 +73,12 @@ def track_operation(operation: str) -> Callable[[F], F]:
             try:
                 return await function(*args, **kwargs)
             finally:
+                duration_seconds = perf_counter() - start
                 OPERATIONS_TOTAL.labels(operation=operation).inc()
                 OPERATION_DURATION_SECONDS.labels(operation=operation).observe(
-                    perf_counter() - start
+                    duration_seconds
                 )
+                _record_operation_timing(operation, duration_seconds)
 
         return wrapped  # type: ignore[return-value]
 
@@ -61,3 +96,37 @@ async def refresh_metrics(car_repository: Any, rental_repository: Any) -> None:
 def metrics_response() -> Response:
     """Generate Prometheus-format metrics response."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+def operation_statistics_snapshot() -> dict[str, Any]:
+    """Return friendly operation timing statistics for the dashboard UI."""
+    with _operation_timings_lock:
+        operation_rows: list[dict[str, Any]] = []
+        total_count = 0
+        total_seconds = 0.0
+
+        for operation, timing in sorted(_operation_timings.items()):
+            average_seconds = timing.total_seconds / timing.count if timing.count else 0.0
+            total_count += timing.count
+            total_seconds += timing.total_seconds
+            operation_rows.append(
+                {
+                    "operation": operation,
+                    "count": timing.count,
+                    "total_seconds": timing.total_seconds,
+                    "average_seconds": average_seconds,
+                    "average_ms": average_seconds * 1000,
+                    "last_ms": timing.last_seconds * 1000,
+                    "min_ms": (timing.min_seconds or 0.0) * 1000,
+                    "max_ms": (timing.max_seconds or 0.0) * 1000,
+                }
+            )
+
+    overall_average_seconds = total_seconds / total_count if total_count else 0.0
+    return {
+        "operations": operation_rows,
+        "total_count": total_count,
+        "total_seconds": total_seconds,
+        "average_seconds": overall_average_seconds,
+        "average_ms": overall_average_seconds * 1000,
+    }

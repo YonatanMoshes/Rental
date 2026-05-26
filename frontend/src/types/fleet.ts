@@ -50,3 +50,24 @@ export type RentalCreatePayload = {
 export type RentalUpdatePayload = {
   planned_end_date: string;
 };
+
+/** Average timing for one backend operation. */
+export type OperationTiming = {
+  operation: string;
+  count: number;
+  total_seconds: number;
+  average_seconds: number;
+  average_ms: number;
+  last_ms: number;
+  min_ms: number;
+  max_ms: number;
+};
+
+/** Operation timing statistics summary from the backend. */
+export type OperationStatistics = {
+  operations: OperationTiming[];
+  total_count: number;
+  total_seconds: number;
+  average_seconds: number;
+  average_ms: number;
+};

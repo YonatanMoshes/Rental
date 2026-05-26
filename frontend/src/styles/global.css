@@ -330,6 +330,31 @@ tbody tr:last-child td {
   color: #4f5d70;
 }
 
+.stat-chip {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #f8fafc;
+}
+
+.stat-chip span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.stat-chip strong {
+  white-space: nowrap;
+}
+
+.stats-table {
+  min-width: 860px;
+}
+
 .row-actions {
   display: flex;
   gap: 8px;

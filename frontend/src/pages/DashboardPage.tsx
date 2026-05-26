@@ -20,6 +20,7 @@ import {
   createRental,
   deleteCar,
   endRental,
+  getOperationStatistics,
   listCars,
   listRentals,
   updateCar,
@@ -29,11 +30,13 @@ import { AppHeader } from "../components/AppHeader";
 import { SummaryTile } from "../components/SummaryTile";
 import { CarForm } from "../features/cars/CarForm";
 import { CarsTable } from "../features/cars/CarsTable";
+import { OperationStatisticsPanel } from "../features/observability/OperationStatisticsPanel";
 import { RentalForm } from "../features/rentals/RentalForm";
 import { RentalsTable } from "../features/rentals/RentalsTable";
 import type {
   Car,
   CarCreatePayload,
+  OperationStatistics,
   Rental,
   RentalCreatePayload,
   VehicleStatus
@@ -43,6 +46,7 @@ import { todayIsoDate } from "../utils/dates";
 export function DashboardPage() {
   const [cars, setCars] = useState<Car[]>([]);
   const [rentals, setRentals] = useState<Rental[]>([]);
+  const [operationStatistics, setOperationStatistics] = useState<OperationStatistics | null>(null);
   const [statusFilter, setStatusFilter] = useState<VehicleStatus | "">("");
   const [selectedRentalCarId, setSelectedRentalCarId] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -58,9 +62,14 @@ export function DashboardPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const [carsResult, rentalsResult] = await Promise.all([listCars(), listRentals()]);
+      const [carsResult, rentalsResult, operationStatisticsResult] = await Promise.all([
+        listCars(),
+        listRentals(),
+        getOperationStatistics()
+      ]);
       setCars(carsResult);
       setRentals(rentalsResult);
+      setOperationStatistics(operationStatisticsResult);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load dashboard data.");
     } finally {
@@ -150,6 +159,8 @@ export function DashboardPage() {
         />
         <SummaryTile label="Open rentals" value={openRentals.length} icon={ClipboardList} />
       </section>
+
+      <OperationStatisticsPanel statistics={operationStatistics} isLoading={isLoading} />
 
       <section className="dashboard-grid">
         <div className="forms-column">

@@ -168,6 +168,19 @@ def test_rented_status_filter_returns_only_currently_rented_cars(client):
     assert [car["id"] for car in rented_cars] == [current_car["id"]]
 
 
+def test_car_year_must_be_between_1950_and_2026(client):
+    """The API should accept only car years from 1950 through 2026."""
+    too_old = client.post("/api/cars", json={"model": "Too Old", "year": 1949})
+    min_year = client.post("/api/cars", json={"model": "Classic", "year": 1950})
+    max_year = client.post("/api/cars", json={"model": "Current", "year": 2026})
+    future_year = client.post("/api/cars", json={"model": "Future", "year": 2027})
+
+    assert too_old.status_code == 422
+    assert min_year.status_code == 201
+    assert max_year.status_code == 201
+    assert future_year.status_code == 422
+
+
 def test_rejects_past_rental_dates_over_api(client):
     """The API must reject rental schedules that use dates before today."""
     today = date.today()

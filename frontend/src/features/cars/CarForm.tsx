@@ -12,6 +12,9 @@ import { useState } from "react";
 
 import type { CarCreatePayload, VehicleStatus } from "../../types/fleet";
 
+const MIN_CAR_YEAR = 1950;
+const MAX_CAR_YEAR = 2026;
+
 type CarFormProps = {
   /** Callback when form is submitted with car data. */
   onSubmit: (payload: CarCreatePayload) => Promise<void>;
@@ -21,14 +24,14 @@ type CarFormProps = {
 
 export function CarForm({ onSubmit, isSaving }: CarFormProps) {
   const [model, setModel] = useState("");
-  const [year, setYear] = useState(new Date().getFullYear());
+  const [year, setYear] = useState(MAX_CAR_YEAR);
   const [status, setStatus] = useState<VehicleStatus>("available");
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await onSubmit({ model: model.trim(), year, status });
     setModel("");
-    setYear(new Date().getFullYear());
+    setYear(MAX_CAR_YEAR);
     setStatus("available");
   }
 
@@ -53,8 +56,8 @@ export function CarForm({ onSubmit, isSaving }: CarFormProps) {
           Year
           <input
             type="number"
-            min={1886}
-            max={2100}
+            min={MIN_CAR_YEAR}
+            max={MAX_CAR_YEAR}
             value={year}
             onChange={(event) => setYear(Number(event.target.value))}
             required

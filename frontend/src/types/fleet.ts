@@ -20,6 +20,7 @@ export type Rental = {
   car_id: string;
   customer_name: string;
   start_date: string;
+  planned_end_date: string | null;
   end_date: string | null;
 };
 
@@ -42,4 +43,10 @@ export type RentalCreatePayload = {
   car_id: string;
   customer_name: string;
   start_date: string;
+  planned_end_date?: string | null;
+};
+
+/** Request payload for editing an open rental. */
+export type RentalUpdatePayload = {
+  planned_end_date: string | null;
 };

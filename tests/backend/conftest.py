@@ -9,7 +9,7 @@ from backend.app.main import create_app
 from backend.app.models.documents import CarDocument, RentalDocument
 from backend.app.models.enums import VehicleStatus
 from backend.app.schemas.cars import CarCreate, CarUpdate
-from backend.app.schemas.rentals import RentalCreate
+from backend.app.schemas.rentals import RentalCreate, RentalUpdate
 from backend.app.services.fleet_service import FleetService
 
 
@@ -86,6 +86,14 @@ class InMemoryRentalRepository:
         closed = rental.model_copy(update={"end_date": end_date})
         self._rentals[rental_id] = closed
         return closed
+
+    async def update(self, rental_id: str, data: RentalUpdate) -> RentalDocument | None:
+        rental = self._rentals.get(rental_id)
+        if rental is None:
+            return None
+        updated = rental.model_copy(update=data.model_dump(exclude_unset=True))
+        self._rentals[rental_id] = updated
+        return updated
 
     async def count_open(self) -> int:
         return len([rental for rental in self._rentals.values() if rental.end_date is None])

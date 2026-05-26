@@ -11,7 +11,7 @@ from datetime import date
 from fastapi import APIRouter, Depends
 
 from backend.app.api.dependencies import get_fleet_service
-from backend.app.schemas.rentals import RentalCreate, RentalRead
+from backend.app.schemas.rentals import RentalCreate, RentalRead, RentalUpdate
 from backend.app.services.fleet_service import FleetService
 
 router = APIRouter(prefix="/api/rentals", tags=["rentals"])
@@ -44,6 +44,16 @@ async def list_rentals(
     - omit open_only: all rentals
     """
     return await service.list_rentals(open_only=open_only)
+
+
+@router.patch("/{rental_id}", response_model=RentalRead)
+async def update_rental(
+    rental_id: str,
+    data: RentalUpdate,
+    service: FleetService = Depends(get_fleet_service),
+) -> RentalRead:
+    """Edit the planned return date for an open rental."""
+    return await service.update_rental_plan(rental_id, data)
 
 
 @router.post("/{rental_id}/end", response_model=RentalRead)

@@ -8,13 +8,23 @@
             "car_id": car_id,
             "customer_name": "Dana Levi",
             "start_date": "2026-05-25",
+            "planned_end_date": "2026-05-28",
         },
     )
     rental_id = rental_response.json()["id"]
 
     assert car_response.status_code == 201
     assert rental_response.status_code == 201
+    assert rental_response.json()["planned_end_date"] == "2026-05-28"
     assert client.get("/api/cars").json()[0]["status"] == "rented"
+
+    update_response = client.patch(
+        f"/api/rentals/{rental_id}",
+        json={"planned_end_date": "2026-05-29"},
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.json()["planned_end_date"] == "2026-05-29"
 
     end_response = client.post(
         f"/api/rentals/{rental_id}/end",
@@ -22,6 +32,7 @@
     )
 
     assert end_response.status_code == 200
+    assert end_response.json()["planned_end_date"] == "2026-05-29"
     assert end_response.json()["end_date"] == "2026-05-26"
     assert client.get("/api/cars").json()[0]["status"] == "available"
 

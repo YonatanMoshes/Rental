@@ -4,11 +4,13 @@
  * Displays all rentals (past and active) with:
  * - Car details
  * - Customer name
- * - Start and end dates
+ * - Start, planned return, and actual end dates
+ * - Planned return editing for open rentals
  * - Action button to end active rentals
  */
 
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Save } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import type { Car, Rental } from "../../types/fleet";
 import { carDisplayName } from "../../utils/labels";
@@ -18,14 +20,44 @@ type RentalsTableProps = {
   cars: Car[];
   /** All rentals to display. */
   rentals: Rental[];
+  /** Callback when user saves a changed planned return date. */
+  onUpdatePlannedEnd: (rentalId: string, plannedEndDate: string | null) => Promise<void>;
   /** Callback when user clicks 'End rental' button. */
   onEndRental: (rental: Rental) => Promise<void>;
+  /** If true, disables rental action buttons during save. */
+  isSaving: boolean;
 };
 
-export function RentalsTable({ cars, rentals, onEndRental }: RentalsTableProps) {
+export function RentalsTable({
+  cars,
+  rentals,
+  onUpdatePlannedEnd,
+  onEndRental,
+  isSaving
+}: RentalsTableProps) {
+  const [draftPlannedEnds, setDraftPlannedEnds] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const nextDrafts: Record<string, string> = {};
+    for (const rental of rentals) {
+      if (rental.end_date === null) {
+        nextDrafts[rental.id] = rental.planned_end_date ?? rental.start_date;
+      }
+    }
+    setDraftPlannedEnds(nextDrafts);
+  }, [rentals]);
+
   function carName(carId: string): string {
     const car = cars.find((item) => item.id === carId);
     return car ? carDisplayName(car) : `Car ${carId}`;
+  }
+
+  function plannedEndValue(rental: Rental): string {
+    return draftPlannedEnds[rental.id] ?? rental.planned_end_date ?? rental.start_date;
+  }
+
+  function setPlannedEndValue(rentalId: string, value: string) {
+    setDraftPlannedEnds((current) => ({ ...current, [rentalId]: value }));
   }
 
   return (
@@ -47,7 +79,8 @@ export function RentalsTable({ cars, rentals, onEndRental }: RentalsTableProps) 
                 <th>Car</th>
                 <th>Customer</th>
                 <th>Start</th>
-                <th>End</th>
+                <th>Planned return</th>
+                <th>Actual end</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -57,12 +90,35 @@ export function RentalsTable({ cars, rentals, onEndRental }: RentalsTableProps) 
                   <td data-label="Car">{carName(rental.car_id)}</td>
                   <td data-label="Customer">{rental.customer_name}</td>
                   <td data-label="Start">{rental.start_date}</td>
-                  <td data-label="End">{rental.end_date ?? "Open"}</td>
+                  <td data-label="Planned return">
+                    {rental.end_date === null ? (
+                      <div className="date-action-row">
+                        <input
+                          aria-label={`Planned return date for ${rental.customer_name}`}
+                          type="date"
+                          value={plannedEndValue(rental)}
+                          min={rental.start_date}
+                          onChange={(event) => setPlannedEndValue(rental.id, event.target.value)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => onUpdatePlannedEnd(rental.id, plannedEndValue(rental) || null)}
+                          disabled={isSaving}
+                        >
+                          <Save size={16} aria-hidden="true" />
+                          Save plan
+                        </button>
+                      </div>
+                    ) : (
+                      rental.planned_end_date ?? "-"
+                    )}
+                  </td>
+                  <td data-label="Actual end">{rental.end_date ?? "Open"}</td>
                   <td data-label="Actions">
                     {rental.end_date === null ? (
-                      <button type="button" onClick={() => onEndRental(rental)}>
+                      <button type="button" onClick={() => onEndRental(rental)} disabled={isSaving}>
                         <CheckCircle2 size={17} aria-hidden="true" />
-                        End rental
+                        End now
                       </button>
                     ) : (
                       <span className="muted">Closed</span>

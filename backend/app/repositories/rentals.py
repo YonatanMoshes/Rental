@@ -9,7 +9,7 @@ from typing import Any
 
 from backend.app.db.object_ids import parse_object_id
 from backend.app.models.documents import RentalDocument
-from backend.app.schemas.rentals import RentalCreate
+from backend.app.schemas.rentals import RentalCreate, RentalUpdate
 
 
 class MongoRentalRepository:
@@ -65,6 +65,19 @@ class MongoRentalRepository:
         document = await self.collection.find_one({"_id": object_id})
         return self._to_document(document) if document else None
 
+    async def update(self, rental_id: str, data: RentalUpdate) -> RentalDocument | None:
+        """Update editable rental fields for an open rental."""
+        object_id = parse_object_id(rental_id)
+        if object_id is None:
+            return None
+
+        changes = data.model_dump(exclude_unset=True, mode="json")
+        if changes:
+            await self.collection.update_one({"_id": object_id}, {"$set": changes})
+
+        document = await self.collection.find_one({"_id": object_id})
+        return self._to_document(document) if document else None
+
     async def count_open(self) -> int:
         """Get count of active (open) rentals (used for dashboard metrics)."""
         return int(await self.collection.count_documents({"end_date": None}))
@@ -76,5 +89,6 @@ class MongoRentalRepository:
             car_id=document["car_id"],
             customer_name=document["customer_name"],
             start_date=document["start_date"],
+            planned_end_date=document.get("planned_end_date"),
             end_date=document.get("end_date"),
         )

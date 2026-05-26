@@ -22,7 +22,8 @@ import {
   endRental,
   listCars,
   listRentals,
-  updateCar
+  updateCar,
+  updateRental
 } from "../api/fleetApi";
 import { AppHeader } from "../components/AppHeader";
 import { SummaryTile } from "../components/SummaryTile";
@@ -116,10 +117,14 @@ export function DashboardPage() {
 
   async function handleEndRental(rental: Rental) {
     await runAction(async () => {
-      const today = todayIsoDate();
-      const endDate = rental.start_date > today ? rental.start_date : today;
-      await endRental(rental.id, endDate);
+      await endRental(rental.id, todayIsoDate());
     }, "Rental ended.");
+  }
+
+  async function handleUpdateRentalPlan(rentalId: string, plannedEndDate: string | null) {
+    await runAction(async () => {
+      await updateRental(rentalId, { planned_end_date: plannedEndDate });
+    }, "Rental plan updated.");
   }
 
   return (
@@ -165,7 +170,13 @@ export function DashboardPage() {
             onDeleteCar={handleDeleteCar}
             onSelectForRental={setSelectedRentalCarId}
           />
-          <RentalsTable cars={cars} rentals={rentals} onEndRental={handleEndRental} />
+          <RentalsTable
+            cars={cars}
+            rentals={rentals}
+            onUpdatePlannedEnd={handleUpdateRentalPlan}
+            onEndRental={handleEndRental}
+            isSaving={isSaving}
+          />
         </div>
       </section>
     </main>

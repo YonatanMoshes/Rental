@@ -12,6 +12,7 @@ import type {
   CarUpdatePayload,
   Rental,
   RentalCreatePayload,
+  RentalUpdatePayload,
   VehicleStatus
 } from "../types/fleet";
 
@@ -66,6 +67,16 @@ export function listRentals(openOnly?: boolean): Promise<Rental[]> {
 export function createRental(payload: RentalCreatePayload): Promise<Rental> {
   return request<Rental>("/api/rentals", {
     method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+/**
+ * Edit an open rental's planned return date.
+ */
+export function updateRental(rentalId: string, payload: RentalUpdatePayload): Promise<Rental> {
+  return request<Rental>(`/api/rentals/${rentalId}`, {
+    method: "PATCH",
     body: JSON.stringify(payload)
   });
 }

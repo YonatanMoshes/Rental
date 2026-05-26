@@ -275,7 +275,7 @@ label {
 
 table {
   width: 100%;
-  min-width: 760px;
+  min-width: 960px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -334,6 +334,17 @@ tbody tr:last-child td {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.date-action-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.date-action-row input {
+  width: 150px;
 }
 
 .empty-state {

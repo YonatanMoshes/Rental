@@ -6,7 +6,7 @@ import pytest
 from backend.app.core.errors import BusinessRuleError, NotFoundError
 from backend.app.models.enums import VehicleStatus
 from backend.app.schemas.cars import CarCreate, CarUpdate
-from backend.app.schemas.rentals import RentalCreate
+from backend.app.schemas.rentals import RentalCreate, RentalUpdate
 from backend.app.services.fleet_service import FleetService
 
 
@@ -70,16 +70,62 @@ def test_start_rental_marks_car_as_rented(fleet_service):
     asyncio.run(scenario())
 
 
+def test_start_rental_keeps_planned_end_date(fleet_service):
+    async def scenario():
+        car = await fleet_service.add_car(CarCreate(model="Toyota Corolla", year=2024))
+        rental = await fleet_service.start_rental(
+            RentalCreate(
+                car_id=car.id,
+                customer_name="Dana Levi",
+                start_date=date(2026, 5, 25),
+                planned_end_date=date(2026, 5, 28),
+            )
+        )
+
+        assert rental.planned_end_date == date(2026, 5, 28)
+        assert rental.end_date is None
+
+    asyncio.run(scenario())
+
+
+def test_update_rental_planned_end_date(fleet_service):
+    async def scenario():
+        car = await fleet_service.add_car(CarCreate(model="Kia Niro", year=2024))
+        rental = await fleet_service.start_rental(
+            RentalCreate(
+                car_id=car.id,
+                customer_name="Noa Amir",
+                start_date=date(2026, 5, 25),
+                planned_end_date=date(2026, 5, 28),
+            )
+        )
+
+        updated = await fleet_service.update_rental_plan(
+            rental.id,
+            RentalUpdate(planned_end_date=date(2026, 5, 29)),
+        )
+
+        assert updated.planned_end_date == date(2026, 5, 29)
+
+    asyncio.run(scenario())
+
+
 def test_end_rental_marks_car_available(fleet_service):
     async def scenario():
         car = await fleet_service.add_car(CarCreate(model="Mazda 3", year=2023))
         rental = await fleet_service.start_rental(
-            RentalCreate(car_id=car.id, customer_name="Avi Cohen", start_date=date(2026, 5, 25))
+            RentalCreate(
+                car_id=car.id,
+                customer_name="Avi Cohen",
+                start_date=date(2026, 5, 25),
+                planned_end_date=date(2026, 5, 30),
+            )
         )
         closed = await fleet_service.end_rental(rental.id, end_date=date(2026, 5, 26))
 
         cars = await fleet_service.list_cars()
         assert closed.end_date == date(2026, 5, 26)
+        assert closed.planned_end_date == date(2026, 5, 30)
         assert cars[0].status == VehicleStatus.AVAILABLE
 
     asyncio.run(scenario())

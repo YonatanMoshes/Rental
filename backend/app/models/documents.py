@@ -28,4 +28,5 @@ class RentalDocument(BaseModel):
     car_id: str
     customer_name: str
     start_date: date
+    planned_end_date: date | None = None
     end_date: date | None = None

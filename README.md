@@ -5,7 +5,7 @@ Rental Fleet Manager is a full-stack car rental management system built with Rea
 The project is designed as a professional multi-service system:
 
 - React frontend for the user interface.
-- FastAPI backend for REST API endpoints and business rules.
+- FastAPI backend for REST API endpoints and app logic checks.
 - MongoDB for persistent NoSQL document storage.
 - RabbitMQ for message-queue-based backend communication.
 - A separate worker process for asynchronous event processing.
@@ -42,24 +42,24 @@ flowchart LR
     Browser["Browser"]
     React["React Frontend<br/>Vite + TypeScript"]
     Nginx["Nginx<br/>serves React and proxies /api"]
-    API["FastAPI Backend<br/>REST + business logic"]
+    API["FastAPI Backend<br/>REST + app logic"]
     Mongo["MongoDB<br/>cars, rentals, fleet_events"]
     Rabbit["RabbitMQ<br/>message queue"]
     Worker["Event Worker<br/>queue consumer"]
     Metrics["Prometheus Metrics<br/>/metrics"]
 
-    User --> Browser
-    Browser --> React
-    React --> Nginx
-    Nginx --> API
-    API --> Mongo
-    API --> Rabbit
-    Rabbit --> Worker
-    Worker --> Mongo
-    API --> Metrics
+    User -->|"uses the app in"| Browser
+    Browser -->|"loads and runs"| React
+    React -->|"sends fetch requests to"| Nginx
+    Nginx -->|"proxies /api calls to"| API
+    API -->|"reads/writes documents in"| Mongo
+    API -->|"publishes domain events to"| Rabbit
+    Rabbit -->|"delivers queued events to"| Worker
+    Worker -->|"stores consumed events in"| Mongo
+    API -->|"exposes measurements at"| Metrics
 ```
 
-The direct user flow is simple: the user clicks in the React app, React sends an API request, FastAPI validates and applies business rules, and MongoDB stores the result.
+The direct user flow is simple: the user clicks in the React app, React sends an API request, FastAPI validates the data, the service checks whether the requested action is legal for this app, and MongoDB stores the result.
 
 The message queue flow happens after important business changes. For example, after a car is created, FastAPI publishes a `car.created` event to RabbitMQ. The worker consumes that event and stores it in the `fleet_events` MongoDB collection. This proves the system is using queue-based communication and gives a clean audit trail.
 
@@ -67,14 +67,14 @@ The message queue flow happens after important business changes. For example, af
 
 The backend uses layered architecture, not classic MVC.
 
-Layered architecture means every layer has one responsibility and communicates with the layer below it. The HTTP layer does not directly write MongoDB. The service layer does not know low-level database details. The repository layer does not decide business rules.
+Layered architecture means every layer has one responsibility and communicates with the layer below it. The HTTP layer does not directly write MongoDB. The service layer checks the app logic but does not know low-level database details. The repository layer talks to MongoDB but does not decide whether a rental action is legal.
 
 ```mermaid
 flowchart TB
     Routes["API Routes<br/>backend/app/api/routes"]
     Schemas["Schemas<br/>backend/app/schemas"]
     Dependencies["Dependency Injection<br/>backend/app/api/dependencies.py"]
-    Service["Service Layer<br/>backend/app/services/FleetService"]
+    Service["Service Layer<br/>backend/app/services/FleetService<br/>app logic and legal action checks"]
     Repositories["Repository Layer<br/>backend/app/repositories"]
     Models["Domain Models<br/>backend/app/models"]
     Database["MongoDB Connection<br/>backend/app/db"]
@@ -82,16 +82,16 @@ flowchart TB
     Worker["Worker Layer<br/>backend/app/workers"]
     Core["Core Utilities<br/>backend/app/core"]
 
-    Routes --> Schemas
-    Routes --> Dependencies
-    Dependencies --> Service
-    Service --> Repositories
-    Repositories --> Models
-    Repositories --> Database
-    Service --> Messaging
-    Messaging --> Worker
-    Routes --> Core
-    Service --> Core
+    Routes -->|"receives HTTP data and asks schemas to parse it"| Schemas
+    Routes -->|"asks FastAPI to inject ready objects"| Dependencies
+    Dependencies -->|"builds FleetService with repositories and publisher"| Service
+    Service -->|"asks for saved/loaded fleet data"| Repositories
+    Repositories -->|"returns clean domain objects"| Models
+    Repositories -->|"runs actual MongoDB queries"| Database
+    Service -->|"publishes events after successful changes"| Messaging
+    Messaging -->|"queue consumer runs in"| Worker
+    Routes -->|"uses shared errors and responses"| Core
+    Service -->|"updates metrics and logs app actions"| Core
 ```
 
 ### Why This Architecture Was Chosen
@@ -99,7 +99,7 @@ flowchart TB
 This project needs clear separation because it has more than one concern:
 
 - HTTP API endpoints.
-- Business rules about cars and rentals.
+- App logic about which car and rental actions are legal.
 - MongoDB persistence.
 - RabbitMQ publishing.
 - Background event processing.
@@ -109,28 +109,32 @@ If all of that lived in one file, the project would be hard to understand and ha
 
 ## 3. Backend Layer By Layer
 
-### Backend Layer Flow
+The diagram below shows the exact path of data through the backend. The words on the arrows explain what each layer gives to the next layer.
 
 ```mermaid
-sequenceDiagram
-    participant Client as React Client
-    participant Route as FastAPI Route
-    participant Schema as Pydantic Schema
-    participant Service as FleetService
-    participant Repo as Repository
-    participant DB as MongoDB
-    participant Queue as RabbitMQ
+flowchart TD
+    Client["Frontend / Browser"]
+    API["API Routes Layer<br/>FastAPI route functions"]
+    Schemas["Schema Layer<br/>Pydantic models"]
+    Service["Service Layer<br/>app logic and legal action checks"]
+    LogicCheck["Legal Action Check<br/>example: car cannot be in maintenance"]
+    Repository["Repository Layer<br/>MongoDB access"]
+    Models["Models Layer<br/>CarDocument / RentalDocument"]
+    Mongo["MongoDB"]
+    Queue["RabbitMQ Publisher"]
 
-    Client->>Route: HTTP request with JSON
-    Route->>Schema: Validate request body and query parameters
-    Route->>Service: Call business operation
-    Service->>Repo: Request data operation
-    Repo->>DB: Read or write document
-    DB-->>Repo: Return document/result
-    Repo-->>Service: Return domain model
-    Service->>Queue: Publish domain event if state changed
-    Service-->>Route: Return domain result
-    Route-->>Client: Return JSON response
+    Client -->|"sends HTTP request with JSON body, URL params, or query params"| API
+    API -->|"uses function type hints to know which schema should parse the JSON"| Schemas
+    Schemas -->|"returns clean Python objects like CarCreate or RentalCreate"| API
+    API -->|"passes validated object to FleetService"| Service
+    Service -->|"checks if requested action is legal in this app"| LogicCheck
+    LogicCheck -->|"if action is allowed, continue"| Repository
+    Repository -->|"converts MongoDB documents into domain models"| Models
+    Repository -->|"reads and writes documents"| Mongo
+    Models -->|"returns typed objects back to service"| Service
+    Service -->|"publishes event after successful change"| Queue
+    Service -->|"returns final result to route"| API
+    API -->|"returns JSON response and HTTP status"| Client
 ```
 
 ### 3.1 API Routes Layer
@@ -141,50 +145,11 @@ Location:
 backend/app/api/routes
 ```
 
-Main files:
+The API routes layer is the first backend layer that receives a request from the frontend. It receives an HTTP request, and that request may include a JSON body, a path value like `car_id`, or a query value like `status=available`. The important idea is that this layer translates web data into Python data. For example, when the frontend sends `POST /api/cars` with JSON like `{ "model": "Mazda 3", "year": 2026 }`, the `add_car` route expects a `CarCreate` object in its function signature. FastAPI reads that type hint and understands that the JSON body must be transformed into a `CarCreate` object. If the JSON is missing a required field or the year is invalid, FastAPI rejects it before the service layer is called.
 
-- `cars.py`
-- `rentals.py`
-- `events.py`
-- `system.py`
+After the API route has a clean object, it passes that object to the service layer. The route itself should stay thin: it should not decide if a car can be rented, it should not manually write to MongoDB, and it should not publish queue messages directly. Its main job is to receive the HTTP request, let the schema validate it, call the correct service function, and return a clear JSON response with the correct HTTP status.
 
-What this layer receives:
-
-- HTTP requests from the frontend or API client.
-- JSON request bodies.
-- URL path parameters such as `car_id`.
-- Query parameters such as `status=available` or `open_only=true`.
-
-What this layer does:
-
-- Defines the public REST API endpoints.
-- Uses FastAPI decorators such as `@router.post`, `@router.get`, `@router.patch`, and `@router.delete`.
-- Converts incoming HTTP data into Pydantic schema objects.
-- Calls the service layer.
-- Does not contain business rules directly.
-- Does not write MongoDB directly.
-
-What this layer gives to the next layer:
-
-- Validated Python objects such as `CarCreate`, `CarUpdate`, and `RentalCreate`.
-- The route passes those objects into `FleetService`.
-
-What it returns:
-
-- JSON responses to the frontend.
-- Correct HTTP status codes such as `201 Created`, `200 OK`, `204 No Content`, `404 Not Found`, and `409 Conflict`.
-
-Main complex function of this layer:
-
-- `start_rental` in `backend/app/api/routes/rentals.py`.
-
-Why it matters:
-
-- It receives a rental request from the frontend.
-- It validates the request body as `RentalCreate`.
-- It calls `service.start_rental(data)`.
-- It returns the created rental as JSON.
-- It leaves the real business decision to the service layer.
+Example: `add_car(data: CarCreate, service: FleetService = Depends(...))` receives a JSON request from React, FastAPI converts that JSON into `CarCreate`, and then the route calls `service.add_car(data)`.
 
 ### 3.2 Schemas Layer
 
@@ -194,38 +159,11 @@ Location:
 backend/app/schemas
 ```
 
-Main files:
+Schemas are a layer, but they are a small supporting layer, not a logic layer. They do not decide what the app is allowed to do. Instead, they define the shape of the data that moves between layers. A schema answers questions like: What fields are required? Which fields are optional? What type should each field be? What range is legal for a number? What should the API response look like?
 
-- `cars.py`
-- `rentals.py`
-- `events.py`
+For example, `CarCreate` defines that a new car must have a `model`, a `year`, and can optionally have a `status`. The year must be between 1886 and 2100. This means that if the frontend sends `"year": "hello"` or sends an empty model, the request is not accepted as valid data. The route layer receives the clean `CarCreate` object only after the schema has checked the data format.
 
-What this layer receives:
-
-- Raw request data from HTTP JSON bodies.
-- Data returned from the service layer that needs to be serialized to JSON.
-
-What this layer does:
-
-- Uses Pydantic models to validate incoming data.
-- Defines required fields and optional fields.
-- Defines constraints such as minimum string length and valid year range.
-- Defines API response shape.
-
-What this layer gives to the next layer:
-
-- Clean, typed Python objects.
-- Example: a request body for creating a car becomes a `CarCreate` object.
-
-Main complex function or model of this layer:
-
-- `CarUpdate`.
-
-Why it matters:
-
-- `CarUpdate` allows partial updates.
-- All fields are optional, so the frontend can send only `{ "status": "maintenance" }`.
-- The repository then uses `exclude_none=True` so it only updates fields that were actually provided.
+Another example is `CarUpdate`. This schema has optional fields because updating a car may only change one value. The frontend can send only `{ "status": "maintenance" }`, and the backend understands that only the status should change.
 
 ### 3.3 Dependency Injection Layer
 
@@ -235,32 +173,11 @@ Location:
 backend/app/api/dependencies.py
 ```
 
-What this layer receives:
+The dependency layer builds the objects that routes need before the route function runs. The route does not manually create the service, the car repository, the rental repository, or the RabbitMQ publisher. FastAPI uses `Depends(...)` to call dependency functions and give the route a ready-to-use `FleetService`.
 
-- FastAPI request context.
-- Current MongoDB database connection.
-- Event publisher attached to the FastAPI app state.
+The main example is `get_fleet_service`. This function receives the active MongoDB database object, creates `MongoCarRepository` and `MongoRentalRepository`, receives the RabbitMQ event publisher from the app state, and then returns one `FleetService` object. This keeps the route clean because the route only says it needs a `FleetService`; it does not care how that service is created.
 
-What this layer does:
-
-- Builds the `FleetService`.
-- Injects the MongoDB repositories into the service.
-- Injects the RabbitMQ event publisher into the service.
-- Keeps route files clean.
-
-What this layer gives to the next layer:
-
-- A ready-to-use `FleetService` object.
-
-Main complex function of this layer:
-
-- `get_fleet_service`.
-
-Why it matters:
-
-- Routes do not manually create repositories.
-- Tests can override dependencies easily.
-- This is one of the reasons the backend is maintainable.
+This layer also makes testing easier. In tests, the real MongoDB repositories can be replaced with in-memory repositories, so the service can be tested without running a real database.
 
 ### 3.4 Service Layer
 
@@ -270,53 +187,11 @@ Location:
 backend/app/services/fleet_service.py
 ```
 
-What this layer receives:
+The service layer is the app logic layer. This is where the backend checks whether the requested action is legal in this rental system. A clearer way to describe it is: this layer protects the app from actions that do not make sense. For example, it prevents renting a car that is in maintenance, prevents deleting a car that has an open rental, and prevents ending a rental before its start date.
 
-- Validated schemas from API routes.
-- Repository interfaces for cars and rentals.
-- Event publisher interface for RabbitMQ.
+The service layer receives clean Python objects from the route layer, such as `CarCreate` or `RentalCreate`. Then it asks repositories for the current data it needs. If the request is legal, it tells repositories to save or update data. After the data change succeeds, it refreshes metrics and publishes a RabbitMQ event. Finally, it returns the result back to the route layer.
 
-What this layer does:
-
-- Contains the business rules.
-- Decides whether an operation is allowed.
-- Coordinates multiple repositories in one operation.
-- Refreshes metrics.
-- Publishes domain events after important changes.
-
-What this layer gives to the next layer:
-
-- It sends data operations to the repository layer.
-- It sends queue events to the messaging layer.
-- It returns domain documents back to the API route.
-
-Important business rules:
-
-- Only available cars can be rented.
-- A car with an active rental cannot be deleted.
-- A car cannot be manually marked as rented. It must go through the rental flow.
-- A rental cannot end before its start date.
-- A rented car cannot be changed away from rented until the rental is ended.
-
-Main complex function of this layer:
-
-- `start_rental`.
-
-What `start_rental` does step by step:
-
-1. Receives a `RentalCreate` object from the API route.
-2. Loads the requested car by id using the car repository.
-3. If the car does not exist, raises `NotFoundError`.
-4. If the car is not `available`, raises `BusinessRuleError`.
-5. Checks if the car already has an active rental.
-6. If there is already an active rental, rejects the request.
-7. Creates a rental document in MongoDB through the rental repository.
-8. Updates the car status to `rented`.
-9. Refreshes Prometheus metrics.
-10. Publishes a `rental.started` event to RabbitMQ.
-11. Returns the created rental to the route.
-
-This is complex because it coordinates multiple system parts: car state, rental creation, status update, metrics, and message queue publishing.
+Example: `start_rental` receives a `RentalCreate` object. It loads the car, checks if the car exists, checks if the car status is `available`, checks if there is already an active rental for that car, creates the rental, updates the car status to `rented`, publishes `rental.started`, and returns the created rental. This function is the best example of why the service layer exists: many things must happen in the correct order, and this logic should not be inside the route or the database repository.
 
 ### 3.5 Repository Layer
 
@@ -326,48 +201,11 @@ Location:
 backend/app/repositories
 ```
 
-Main files:
+The repository layer is the database access layer. It receives requests from the service layer such as "create this car", "find this car by id", "list all rentals", or "save this consumed event". It does not decide whether the requested action is legal. It only knows how to talk to MongoDB and how to convert MongoDB documents into clean Python domain objects.
 
-- `cars.py`
-- `rentals.py`
-- `events.py`
+For example, `MongoCarRepository.create` receives a `CarCreate` object from the service. It converts that object into JSON-like data, inserts it into the `cars` collection, loads the created MongoDB document, and returns a `CarDocument`. The service layer does not need to know how MongoDB `_id` values work or how the query is written.
 
-What this layer receives:
-
-- Requests from the service layer such as create car, update car, list rentals, or save event.
-- Validated schema objects or ids.
-
-What this layer does:
-
-- Talks directly to MongoDB collections.
-- Converts MongoDB documents into internal Pydantic domain models.
-- Hides MongoDB query details from the service layer.
-- Handles ObjectId parsing.
-- Runs queries with indexes.
-
-What this layer gives to the next layer:
-
-- MongoDB receives actual database commands.
-- The service layer receives clean domain objects such as `CarDocument` and `RentalDocument`.
-
-Main complex function of this layer:
-
-- `MongoRentalRepository.active_for_car`.
-
-Why it matters:
-
-- This function checks whether a car currently has an open rental.
-- The service layer uses it to prevent double-renting the same car.
-- It queries MongoDB for a rental where `car_id` matches and `end_date` is `None`.
-
-Another important function:
-
-- `MongoCarRepository.count_by_status`.
-
-Why it matters:
-
-- It uses MongoDB aggregation to count cars by status.
-- The metrics layer uses it to expose the number of available and rented cars.
+Another example is `MongoRentalRepository.active_for_car`. The service uses this when it needs to know whether a car already has an open rental. The repository checks MongoDB for a rental with the same `car_id` and `end_date = None`, then returns a `RentalDocument` if one exists.
 
 ### 3.6 Models Layer
 
@@ -377,34 +215,11 @@ Location:
 backend/app/models
 ```
 
-Main files:
+The models layer defines the internal objects that the backend uses after data has already been validated or loaded. The schemas layer describes API input and output. The models layer describes records used inside the backend itself. This keeps the code clear because a raw MongoDB document is not passed everywhere; it is converted into a typed model such as `CarDocument` or `RentalDocument`.
 
-- `documents.py`
-- `enums.py`
+For example, `RentalDocument` represents a rental after it exists in the system. If `end_date` is `None`, the rental is still open. If `end_date` has a date, the rental is closed. The service layer can read this model and make decisions without needing to inspect raw MongoDB dictionaries.
 
-What this layer receives:
-
-- Raw database documents converted by repositories.
-
-What this layer does:
-
-- Defines internal backend data shapes.
-- Defines the `VehicleStatus` enum.
-- Keeps statuses consistent: `available`, `rented`, `maintenance`.
-
-What this layer gives to the next layer:
-
-- Typed domain objects used by services and API responses.
-
-Main complex model:
-
-- `RentalDocument`.
-
-Why it matters:
-
-- It represents the actual rental state.
-- If `end_date` is `None`, the rental is active.
-- If `end_date` has a date, the rental is closed.
+The `VehicleStatus` enum also lives here. It keeps status values consistent, so the app uses `available`, `rented`, and `maintenance` in one controlled way instead of writing random strings in different files.
 
 ### 3.7 Database Layer
 
@@ -414,37 +229,11 @@ Location:
 backend/app/db
 ```
 
-Main files:
+The database layer manages the MongoDB connection itself. It receives configuration values such as `MONGODB_URI` and `MONGODB_DATABASE`, opens the connection when the API starts, gives repositories access to the active database, and closes the connection when the app shuts down. This layer also creates indexes that make important queries faster.
 
-- `mongodb.py`
-- `indexes.py`
-- `object_ids.py`
+The most important function is `connect_to_mongodb`. Docker containers do not always become ready at the exact same second. The API container may start before MongoDB is fully ready to accept connections. Because of that, `connect_to_mongodb` uses a retry loop. It keeps trying to ping MongoDB before it gives up. This makes the Docker startup more stable.
 
-What this layer receives:
-
-- Application settings such as `MONGODB_URI` and `MONGODB_DATABASE`.
-
-What this layer does:
-
-- Connects to MongoDB.
-- Retries connection during Docker startup.
-- Provides the active database object.
-- Closes MongoDB connection on shutdown.
-- Creates indexes for performance.
-
-What this layer gives to the next layer:
-
-- A MongoDB database object that repositories can use.
-
-Main complex function:
-
-- `connect_to_mongodb`.
-
-Why it matters:
-
-- Docker services do not always start in perfect order.
-- The API may start before MongoDB is fully ready.
-- The retry loop makes startup more reliable.
+The `indexes.py` file is also important. It creates indexes for `cars.status`, active rentals by `car_id` and `end_date`, and consumed event lookup by `event_id`. These indexes help the app stay fast as the data grows.
 
 ### 3.8 Core Layer
 
@@ -454,42 +243,11 @@ Location:
 backend/app/core
 ```
 
-Main files:
+The core layer contains shared infrastructure that other backend layers need. It does not represent one feature like cars or rentals. Instead, it provides common support such as configuration, logging, metrics, and expected error types.
 
-- `config.py`
-- `logging.py`
-- `metrics.py`
-- `errors.py`
+For example, `config.py` reads environment variables like the MongoDB URL, RabbitMQ URL, log level, and queue names. `errors.py` defines expected app errors, such as "not found" or "this requested action is not legal in the current app state", and FastAPI converts those errors into clean HTTP responses. `metrics.py` tracks how many operations happened, how long they took, and how many cars are available or rented.
 
-What this layer receives:
-
-- Environment variables.
-- Application events.
-- Exceptions.
-- Metric updates from services.
-
-What this layer does:
-
-- Loads configuration.
-- Configures logs.
-- Defines expected application errors.
-- Exposes Prometheus metrics.
-- Tracks backend operation counts and duration.
-
-What this layer gives to the next layer:
-
-- Shared infrastructure used by all other backend layers.
-
-Main complex function:
-
-- `track_operation`.
-
-Why it matters:
-
-- It wraps service methods.
-- It counts how many times each operation runs.
-- It measures operation duration.
-- It exposes this data through `/metrics`.
+The most complex helper is `track_operation`. It wraps service functions, measures how long they take, counts how many times they run, and exposes the results through `/metrics`. This is useful because a real system should not only work; it should also be observable.
 
 ## 4. Main Backend Functions
 
@@ -509,10 +267,10 @@ flowchart LR
     Event["RabbitMQ car.created"]
     Output["CarDocument"]
 
-    Input --> Repo
-    Repo --> Metrics
-    Metrics --> Event
-    Event --> Output
+    Input -->|"service receives clean schema object"| Repo
+    Repo -->|"repository inserts car into MongoDB"| Metrics
+    Metrics -->|"system counters are recalculated"| Event
+    Event -->|"publisher sends car.created to RabbitMQ"| Output
 ```
 
 Why it is important:
@@ -540,16 +298,16 @@ flowchart TB
     Queue["Publish rental.started"]
     Response["Return rental"]
 
-    Request --> LoadCar
-    LoadCar --> CheckStatus
+    Request -->|"frontend sends car_id, customer_name, start_date"| LoadCar
+    LoadCar -->|"service loads requested car from repository"| CheckStatus
     CheckStatus -->|No| Reject["409 Conflict"]
     CheckStatus -->|Yes| CheckActive
     CheckActive -->|Yes| Reject
     CheckActive -->|No| CreateRental
-    CreateRental --> UpdateCar
-    UpdateCar --> Metrics
-    Metrics --> Queue
-    Queue --> Response
+    CreateRental -->|"repository saves rental document"| UpdateCar
+    UpdateCar -->|"car becomes rented"| Metrics
+    Metrics -->|"available/rented/open-rental counts refresh"| Queue
+    Queue -->|"rental.started event is published"| Response
 ```
 
 Why it is complex:
@@ -595,14 +353,14 @@ flowchart TB
     EventRepo["MongoEventRepository"]
     Mongo["MongoDB fleet_events"]
 
-    Service --> EventFactory
-    EventFactory --> Publisher
-    Publisher --> Exchange
-    Exchange --> Queue
-    Queue --> Consumer
-    Consumer --> Worker
-    Worker --> EventRepo
-    EventRepo --> Mongo
+    Service -->|"after legal app action succeeds, create event"| EventFactory
+    EventFactory -->|"builds FleetEvent JSON shape"| Publisher
+    Publisher -->|"sends persistent message"| Exchange
+    Exchange -->|"routes by routing key fleet.event"| Queue
+    Queue -->|"holds message until worker consumes it"| Consumer
+    Consumer -->|"parses message body into FleetEvent"| Worker
+    Worker -->|"asks repository to audit the event"| EventRepo
+    EventRepo -->|"upserts event by event_id"| Mongo
 ```
 
 ### Event Lifecycle
@@ -713,7 +471,10 @@ flowchart LR
     Work3["Future email/report/integration"]
     Response["Return response"]
 
-    API --> Work1 --> Work2 --> Work3 --> Response
+    API -->|"must finish before response"| Work1
+    Work1 -->|"must finish before response"| Work2
+    Work2 -->|"must finish before response"| Work3
+    Work3 -->|"only then user gets answer"| Response
 ```
 
 In this design, the user waits for every extra task.
@@ -729,8 +490,11 @@ flowchart LR
     Queue["RabbitMQ"]
     Worker["Worker handles extra tasks"]
 
-    API --> Work1 --> Publish --> Response
-    Publish --> Queue --> Worker
+    API -->|"does required database change"| Work1
+    Work1 -->|"publishes small event message"| Publish
+    Publish -->|"user gets response quickly"| Response
+    Publish -->|"background work moves to queue"| Queue
+    Queue -->|"worker handles it later"| Worker
 ```
 
 The user waits only for the important main operation. The worker can process background work separately.
@@ -768,16 +532,16 @@ flowchart TB
     Utils["utils"]
     Styles["styles/global.css"]
 
-    Main --> App
-    App --> Dashboard
-    Dashboard --> API
-    API --> HTTP
-    Dashboard --> CarFeature
-    Dashboard --> RentalFeature
-    Dashboard --> Components
-    Dashboard --> Types
-    Dashboard --> Utils
-    App --> Styles
+    Main -->|"mounts React root"| App
+    App -->|"renders the main screen"| Dashboard
+    Dashboard -->|"calls typed API functions"| API
+    API -->|"uses shared fetch wrapper"| HTTP
+    Dashboard -->|"passes car data and callbacks"| CarFeature
+    Dashboard -->|"passes rental data and callbacks"| RentalFeature
+    Dashboard -->|"uses reusable visual pieces"| Components
+    Dashboard -->|"uses shared TypeScript shapes"| Types
+    Dashboard -->|"uses date and label helpers"| Utils
+    App -->|"loads global app styling"| Styles
 ```
 
 The frontend does not contain database logic. It only manages UI state and sends API requests.
@@ -1116,14 +880,14 @@ flowchart TB
 
     Browser -->|http://127.0.0.1:5173| Frontend
     Frontend -->|proxy /api| API
-    API --> Mongo
-    API --> Rabbit
-    Rabbit --> Worker
-    Worker --> Mongo
-    Mongo --> VolData
-    API --> VolLogs
-    Worker --> VolLogs
-    Rabbit --> VolRabbit
+    API -->|"connects using mongodb://mongo:27017"| Mongo
+    API -->|"publishes events using amqp://rabbitmq:5672"| Rabbit
+    Rabbit -->|"delivers queued events to"| Worker
+    Worker -->|"stores consumed event documents in"| Mongo
+    Mongo -->|"persists database files in"| VolData
+    API -->|"writes app logs to"| VolLogs
+    Worker -->|"writes worker logs to"| VolLogs
+    Rabbit -->|"persists queue broker data in"| VolRabbit
 ```
 
 ### Backend Dockerfile
@@ -1182,10 +946,10 @@ flowchart LR
     Nginx["Stage 2<br/>nginx:1.27-alpine"]
     Serve["Serve static React app"]
 
-    Node --> Build
-    Build --> Dist
-    Dist --> Nginx
-    Nginx --> Serve
+    Node -->|"installs dependencies and compiles React"| Build
+    Build -->|"outputs static production files"| Dist
+    Dist -->|"copies files into runtime image"| Nginx
+    Nginx -->|"serves index.html and assets"| Serve
 ```
 
 Stage 1:
@@ -1290,7 +1054,7 @@ Service integration:
 | Service | Built from | Talks to | Purpose |
 |---|---|---|---|
 | `frontend` | `frontend/Dockerfile` | `api` | Serves React and proxies API requests. |
-| `api` | root `Dockerfile` | `mongo`, `rabbitmq` | Handles REST API, business rules, metrics, and event publishing. |
+| `api` | root `Dockerfile` | `mongo`, `rabbitmq` | Handles REST API, app logic checks, metrics, and event publishing. |
 | `worker` | root `Dockerfile` | `mongo`, `rabbitmq` | Consumes queue events and stores them in MongoDB. |
 | `mongo` | `mongo:7` image | `api`, `worker` | Stores cars, rentals, and events. |
 | `rabbitmq` | `rabbitmq:3-management` image | `api`, `worker` | Message queue between API and worker. |
@@ -1439,6 +1203,6 @@ If the queue is working, actions like adding a car or starting a rental create e
 
 ## Final Architecture Summary
 
-This project uses React for the user interface, FastAPI for backend API and business logic, MongoDB for NoSQL document storage, RabbitMQ for asynchronous queue-based communication, and Docker Compose to run all services together.
+This project uses React for the user interface, FastAPI for backend API and app logic checks, MongoDB for NoSQL document storage, RabbitMQ for asynchronous queue-based communication, and Docker Compose to run all services together.
 
-The most important design decision is separation of responsibilities. The frontend only handles UI and API calls. The API layer handles HTTP. The service layer handles business rules. The repository layer handles MongoDB. The messaging layer handles RabbitMQ. The worker handles asynchronous processing. Docker Compose connects all services into one runnable system.
+The most important design decision is separation of responsibilities. The frontend only handles UI and API calls. The API layer handles HTTP. The service layer checks whether requested app actions are legal. The repository layer handles MongoDB. The messaging layer handles RabbitMQ. The worker handles asynchronous processing. Docker Compose connects all services into one runnable system.

@@ -28,7 +28,7 @@ Detailed extra notes are also available in [docs/system-design.md](docs/system-d
 - [11. Docker Architecture](#11-docker-architecture)
 - [12. How To Run](#12-how-to-run)
 - [13. API Usage Examples](#13-api-usage-examples)
-- [14. Testing Guide](#15-testing-guide)
+- [14. Testing Guide](#14-testing-guide)
 
 ## 1. Full System Overview
 

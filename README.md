@@ -1198,9 +1198,9 @@ If the queue is working, actions like adding a car or starting a rental create e
   }
 }
 ```
-## 15. Testing Guide
+## 14. Testing Guide
 
-The project has more than four working tests. At the time of this README update, the backend test suite contains 20 passing tests. These tests are important because they prove the main app logic works without needing to manually click through the UI every time.
+The project has many tests the backend test suite contains 20 passing tests. These tests are important because they prove the main app logic works without needing to manually click through the UI every time.
 
 Run all backend tests:
 
